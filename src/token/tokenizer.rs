@@ -238,7 +238,40 @@ impl<'a> TokenStream<'a> {
                 }
                 (digit0 * 16 + digit1) as char
             }
-            'u' => todo!("Unicode escape code"),
+            'u' => {
+                let (_, ch) = self
+                    .iter
+                    .next()
+                    .expect("Unexpected EOF after `\\x` escape sequence");
+                if ch != '{' {
+                    panic!("Expects `{{` after `\\u` in escape sequence");
+                }
+                let mut val = 0u32;
+                let mut count = 0usize;
+                while let Some((_, ch)) = self.iter.next_if(|&(_, c)| c != '}') {
+                    count += 1;
+                    val *= 16;
+                    if count > 6 {
+                        panic!("Only 6 hex digits are allowed in \\u{{...}} escape sequence")
+                    }
+                    let digit = hex_char_to_digit!(ch, u32);
+                    if digit > 15 {
+                        panic!("Only hex digits are allowed in \\u{{...}} escape sequence")
+                    }
+                    val += digit;
+                }
+                match self.iter.next() {
+                    Some((_, '}')) => (),
+                    Some((_, c)) => panic!(
+                        "Expects `}}` at the end of \\u{{...}} escape sequence, found `{}`",
+                        c.escape_debug()
+                    ),
+                    None => {
+                        panic!("Expects `}}` at the end of \\u{{...}} escape sequence, found EOF")
+                    }
+                }
+                unsafe { char::from_u32_unchecked(val) }
+            }
             'n' => '\n',
             'r' => '\r',
             't' => '\t',
