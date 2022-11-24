@@ -64,9 +64,8 @@ impl<'a> TokenStream<'a> {
         }
     }
 
-    /// Parse an identifer, starting from the second character
-    /// This function will always return `Some(...)`, just so it is consistent with other
-    /// `parse_` functions
+    /// Parse an identifer *or a keyword*, starting from the second character
+    /// Will always return `Some(...)`, just so it is consistent with other `parse_` functions
     fn parse_identifier(&mut self, start_index: usize) -> Option<Traced<'a, Token<'a>>> {
         let mut end_index = start_index;
         while let Some((i, c)) = self.iter.peek() {
@@ -317,11 +316,13 @@ impl<'a> Iterator for TokenStream<'a> {
             break match self.iter.next()? {
                 (_, c) if c.is_whitespace() => continue,
 
+                // Values
                 (i, c) if c.is_alphabetic_or_underscore() => self.parse_identifier(i),
                 (i, c) if c.is_numeric() => self.parse_number(i, c),
                 (i, '\'') => self.parse_char(i),
                 (i, '\"') => self.parse_string(i),
 
+                // Operators
                 (i, '~') => Some(Token::Squiggle.wrap_loc((self.path, i, i))),
                 (i, '(') => Some(Token::RoundParenOpen.wrap_loc((self.path, i, i))),
                 (i, ')') => Some(Token::RoundParenClose.wrap_loc((self.path, i, i))),
@@ -348,6 +349,35 @@ impl<'a> Iterator for TokenStream<'a> {
                 },
                 (i, '/') => match self.iter.peek() {
                     Some(&(i0, '=')) => next_and_ret_token!(DivEq, i, i0),
+                    Some(&(_, '/')) => {
+                        // Single line comment
+                        while let Some((_, c)) = self.iter.next() {
+                            if c == '\n' {
+                                break;
+                            }
+                        }
+                        continue;
+                    }
+                    Some(&(_, '*')) => {
+                        // Multi-line comment
+                        let mut level = 1usize;
+                        while level != 0 {
+                            match self.iter.next()?.1 {
+                                '/' => {
+                                    if self.iter.next()?.1 == '*' {
+                                        level += 1;
+                                    }
+                                }
+                                '*' => {
+                                    if self.iter.next()?.1 == '/' {
+                                        level -= 1;
+                                    }
+                                }
+                                _ => (),
+                            }
+                        }
+                        continue;
+                    }
                     _ => Some(Token::Div.wrap_loc((self.path, i, i))),
                 },
                 (i, '%') => match self.iter.peek() {
