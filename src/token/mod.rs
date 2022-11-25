@@ -1,7 +1,7 @@
 #![allow(dead_code)]
 use std::fmt::Debug;
 
-use crate::errors::location::{IntoSourceLoc, Traced};
+use crate::error::location::{IntoSourceLoc, Traced};
 
 pub mod tokenizer;
 

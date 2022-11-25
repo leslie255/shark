@@ -1,17 +1,8 @@
-use std::{collections::HashMap, fs, iter::Peekable, str::CharIndices};
+use std::{iter::Peekable, str::CharIndices};
 
-use crate::{errors::location::Traced, token::Token};
+use crate::{buffered_content::BufferedContent, error::location::Traced, token::Token};
 
 use super::NumValue;
-
-/// Contents of source files used during compilation
-/// Allows for no copying for identifier strings and will be used for error reporting
-/// Does not own the path strings
-/// TODO: buffers parsed tokens to prevent re-lexing a header file included multiple times
-#[derive(Debug, Clone, Default)]
-pub struct BufferedSources<'a> {
-    map: HashMap<&'a str, String>,
-}
 
 trait CharCustomFuncs {
     fn is_alphabetic_or_underscore(self) -> bool;
@@ -41,26 +32,19 @@ macro_rules! hex_char_to_digit {
 /// Tokenizes a file on-the-pass, implements an iterator for scanning through a file
 #[derive(Debug)]
 pub struct TokenStream<'a> {
-    buffed_sources: &'a mut BufferedSources<'a>,
+    buffed_sources: &'a BufferedContent<'a>,
     path: &'a str,
-    source: &'a String,
+    source: &'a str,
     iter: Peekable<CharIndices<'a>>,
 }
 impl<'a> TokenStream<'a> {
-    pub fn new(path: &'a str, buffed_sources: &'a mut BufferedSources<'a>) -> Self {
-        let source = if let Some(source) = buffed_sources.map.get(path) {
-            source
-        } else {
-            let content = fs::read_to_string(path).expect("Unable to read file: {:?}");
-            buffed_sources.map.insert(path, content);
-            buffed_sources.map.get(path).unwrap()
-        };
-        let borrow = unsafe { (source as *const String).as_ref().unwrap() };
-        TokenStream {
+    pub fn new(path: &'a str, buffed_sources: &'a BufferedContent<'a>) -> Self {
+        let source = buffed_sources.open_file(path);
+        Self {
             buffed_sources,
             path,
-            source: borrow,
-            iter: borrow.char_indices().peekable(),
+            source,
+            iter: source.char_indices().peekable(),
         }
     }
 
@@ -113,7 +97,7 @@ impl<'a> TokenStream<'a> {
         let mut val = first_ch as u64 - ('0' as u64);
         if val == 0 {
             // could be 0x, 0o, 0d, 0b prefix numbers
-            let second_char = if let Some((_, c)) = self.iter.next() {
+            let second_char = if let Some((_, c)) = self.iter.peek() {
                 c
             } else {
                 let token = Token::Number(NumValue::U(0));
@@ -121,6 +105,7 @@ impl<'a> TokenStream<'a> {
             };
             match second_char {
                 'x' => {
+                    self.iter.next();
                     while let Some((i, c)) = self.iter.peek() {
                         let digit = hex_char_to_digit!(*c, u64);
                         if digit > 15 {
@@ -135,6 +120,7 @@ impl<'a> TokenStream<'a> {
                     Some(token.wrap_loc((self.path, start_index, end_index)))
                 }
                 'd' => {
+                    self.iter.next();
                     while let Some((i, c)) = self.iter.peek() {
                         let digit = (*c as u64).wrapping_sub('0' as u64);
                         if digit > 9 {
@@ -149,6 +135,7 @@ impl<'a> TokenStream<'a> {
                     Some(token.wrap_loc((self.path, start_index, end_index)))
                 }
                 'o' => {
+                    self.iter.next();
                     while let Some((i, c)) = self.iter.peek() {
                         let digit = (*c as u64).wrapping_sub('0' as u64);
                         if digit > 7 {
@@ -163,6 +150,7 @@ impl<'a> TokenStream<'a> {
                     Some(token.wrap_loc((self.path, start_index, end_index)))
                 }
                 'b' => {
+                    self.iter.next();
                     while let Some((i, c)) = self.iter.peek() {
                         match *c {
                             '0' => {
@@ -184,6 +172,8 @@ impl<'a> TokenStream<'a> {
                 }
                 '.' => todo!("Parse floating point numbers"),
                 c if c.is_numeric() => {
+                    let second_char = *second_char;
+                    self.iter.next();
                     val += second_char as u64 - ('0' as u64);
                     while let Some((i, c)) = self.iter.peek() {
                         let digit = (*c as u64).wrapping_sub('0' as u64);
@@ -198,7 +188,15 @@ impl<'a> TokenStream<'a> {
                     let token = Token::Number(NumValue::U(val));
                     Some(token.wrap_loc((self.path, start_index, end_index)))
                 }
-                _ => panic!("Expects 0~9, x, o, d, b after `0`"),
+                c if c.is_alphabetic_or_underscore() => panic!(
+                    "Expects 0~9, x, o, d, b after `0`, found `{}`",
+                    c.escape_default()
+                ),
+                _ => Some(Token::Number(NumValue::U(0)).wrap_loc((
+                    self.path,
+                    start_index,
+                    end_index,
+                ))),
             }
         } else {
             // TODO: floating point numbers
