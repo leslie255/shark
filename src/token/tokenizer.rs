@@ -32,6 +32,7 @@ macro_rules! hex_char_to_digit {
 /// Tokenizes a file on-the-pass, implements an iterator for scanning through a file
 #[derive(Debug)]
 pub struct TokenStream<'a> {
+    #[allow(dead_code)] // for expanding `#include` macros in the future
     buffed_sources: &'a BufferedContent<'a>,
     path: &'a str,
     source: &'a str,
@@ -87,7 +88,6 @@ impl<'a> TokenStream<'a> {
 
     /// Parse an identifer starting from the second character
     /// Unlike `parse_identifier(...)`, it does need to know the first character
-    #[allow(unused_variables)]
     fn parse_number(
         &mut self,
         start_index: usize,
@@ -447,10 +447,10 @@ impl<'a> Iterator for TokenStream<'a> {
                             _ => Some(Token::LeLe.wrap_loc((self.path, i, i0))),
                         }
                     }
-                    _ => Some(Token::XorOp.wrap_loc((self.path, i, i))),
+                    _ => Some(Token::Le.wrap_loc((self.path, i, i))),
                 },
                 (i, '>') => match self.iter.peek() {
-                    Some(&(i0, '=')) => next_and_ret_token!(LeEq, i, i0),
+                    Some(&(i0, '=')) => next_and_ret_token!(GrEq, i, i0),
                     Some(&(i0, '>')) => {
                         self.iter.next();
                         match self.iter.peek() {
@@ -458,7 +458,7 @@ impl<'a> Iterator for TokenStream<'a> {
                             _ => Some(Token::GrGr.wrap_loc((self.path, i, i0))),
                         }
                     }
-                    _ => Some(Token::XorOp.wrap_loc((self.path, i, i))),
+                    _ => Some(Token::Gr.wrap_loc((self.path, i, i))),
                 },
                 (_, c) => panic!("Unexpected character `{}`", c.escape_debug()),
             };

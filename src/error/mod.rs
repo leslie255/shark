@@ -1,11 +1,9 @@
 #![allow(dead_code)]
 pub mod location;
 
-use location::SourceLocation;
+use location::{IntoSourceLoc, SourceLocation};
 
 use crate::buffered_content::BufferedContent;
-
-use self::location::IntoSourceLoc;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum StringOrChar {

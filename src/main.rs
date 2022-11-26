@@ -1,10 +1,11 @@
+mod ast;
+mod buffered_content;
 mod error;
 mod token;
-mod buffered_content;
 
+use buffered_content::BufferedContent;
 use error::{ErrorCollector, ErrorContent};
 use token::tokenizer::TokenStream;
-use buffered_content::BufferedContent;
 
 fn main() {
     let buffers = BufferedContent::default();

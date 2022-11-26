@@ -1,10 +1,10 @@
-#![allow(dead_code)]
 use std::fmt::Debug;
 
 use crate::error::location::{IntoSourceLoc, Traced};
 
 pub mod tokenizer;
 
+#[allow(dead_code)]
 #[derive(Clone, Copy, PartialEq)]
 pub enum NumValue {
     U(u64),
