@@ -21,7 +21,10 @@ impl<'a> BufferedContent<'a> {
         if let Some(cached_content) = self.map.borrow().get(path) {
             return unsafe { cached_content.get().as_ref().unwrap() };
         }
-        let string = fs::read_to_string(path).expect("Unable to read file");
+        let string = match fs::read_to_string(path) {
+            Ok(s) => s,
+            Err(e) => panic!("Unable to open file {:?}: {:?}", path, e),
+        };
         self.map.borrow_mut().insert(path, string.into());
         unsafe { self.map.borrow().get(path).unwrap().get().as_ref().unwrap() }
     }

@@ -4,16 +4,14 @@ mod error;
 mod token;
 
 use buffered_content::BufferedContent;
-use error::{ErrorCollector, ErrorContent};
+use error::ErrorCollector;
 use token::tokenizer::TokenStream;
 
 fn main() {
     let buffers = BufferedContent::default();
-    let token_stream = TokenStream::new("test.shark", &buffers);
+    let file_name = "test.shark";
+    let err_collector = ErrorCollector::default();
+    let token_stream = TokenStream::new(file_name, &buffers, &err_collector);
     token_stream.for_each(|t| println!("{:?}\t{:?}", t.source_location(), t));
-    let mut err_collector = ErrorCollector::default();
-    ErrorContent::VarNotExist("lol")
-        .package(("test.shark", 0, 1))
-        .collect_into(&mut err_collector);
     err_collector.print_and_dump_all(&buffers);
 }

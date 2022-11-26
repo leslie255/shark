@@ -5,25 +5,27 @@ mod type_expr;
 
 use std::{fmt::Debug, ops::Deref};
 
-use crate::token::NumValue;
+use crate::{error::location::Traced, token::NumValue};
 use type_expr::TypeExpr;
 
 /// All AST nodes are stored inside a pool
 /// Uses `AstNodeRef` for inter-reference between nodes
 #[derive(Debug, Clone)]
 pub struct Ast<'a> {
-    node_pool: Vec<AstNode<'a>>,
+    node_pool: Vec<Traced<'a, AstNode<'a>>>,
     pub str_pool: Vec<String>,
-    pub root_nodes: Vec<AstNodeRef<'a>>,
+    pub root_nodes: Vec<Traced<'a, AstNodeRef<'a>>>,
 }
 
 impl<'a> Ast<'a> {
     /// Add a new node to pool
     /// Returns a reference to that node
-    pub fn add_to_pool(&mut self, new_node: AstNode<'a>) -> AstNodeRef<'a> {
+    pub fn add_to_pool(&mut self, new_node: Traced<'a, AstNode<'a>>) -> AstNodeRef<'a> {
         self.node_pool.push(new_node);
         let node_ref = self.node_pool.last().unwrap();
-        AstNodeRef::new(node_ref as *const AstNode)
+        AstNodeRef {
+            raw_ptr: node_ref as *const Traced<'a, AstNode>,
+        }
     }
 }
 
@@ -71,7 +73,7 @@ pub enum AstNode<'a> {
 /// Cannot be initialized independently
 #[derive(Clone, Copy)]
 pub struct AstNodeRef<'a> {
-    raw_ptr: *const AstNode<'a>,
+    raw_ptr: *const Traced<'a, AstNode<'a>>,
 }
 impl<'a> Deref for AstNodeRef<'a> {
     type Target = AstNode<'a>;
@@ -83,13 +85,6 @@ impl<'a> Deref for AstNodeRef<'a> {
 impl<'a> Debug for AstNodeRef<'a> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         self.deref().fmt(f)
-    }
-}
-impl<'a> AstNodeRef<'a> {
-    fn new(node_ref: *const AstNode<'a>) -> Self {
-        Self {
-            raw_ptr: node_ref as *const AstNode<'a>,
-        }
     }
 }
 
@@ -106,7 +101,7 @@ pub struct IfExpr<'a> {
     /// Condition and body
     /// `if` and `else if` blocks are treated the same
     pub if_blocks: Vec<(AstNodeRef<'a>, Vec<AstNodeRef<'a>>)>,
-    pub else_block: Option<Vec<AstNodeRef<'a>>>
+    pub else_block: Option<Vec<AstNodeRef<'a>>>,
 }
 
 /// Type of an arithmatic operations

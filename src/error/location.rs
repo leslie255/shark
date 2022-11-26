@@ -40,11 +40,19 @@ impl<'a> IntoSourceLoc<'a> for SourceLocation<'a> {
         self
     }
 }
+impl<'a> IntoSourceLoc<'a> for (&'a str, usize) {
+    fn into_source_location(self) -> SourceLocation<'a> {
+        SourceLocation {
+            file_name: self.0,
+            range: (self.1, self.1),
+        }
+    }
+}
 impl<'a> IntoSourceLoc<'a> for (&'a str, (usize, usize)) {
     fn into_source_location(self) -> SourceLocation<'a> {
         SourceLocation {
             file_name: self.0,
-            range: (self.1.0, self.1.1),
+            range: (self.1 .0, self.1 .1),
         }
     }
 }

@@ -1,6 +1,10 @@
 use std::{iter::Peekable, str::CharIndices};
 
-use crate::{buffered_content::BufferedContent, error::location::Traced, token::Token};
+use crate::{
+    buffered_content::BufferedContent,
+    error::{location::Traced, CollectIfErr, Error, ErrorCollector, ErrorContent, StrOrChar},
+    token::Token,
+};
 
 use super::NumValue;
 
@@ -37,21 +41,27 @@ pub struct TokenStream<'a> {
     path: &'a str,
     source: &'a str,
     iter: Peekable<CharIndices<'a>>,
+    err_collector: &'a ErrorCollector<'a>,
 }
-impl<'a> TokenStream<'a> {
-    pub fn new(path: &'a str, buffed_sources: &'a BufferedContent<'a>) -> Self {
+impl<'src> TokenStream<'src> {
+    pub fn new(
+        path: &'src str,
+        buffed_sources: &'src BufferedContent<'src>,
+        err_collector: &'src ErrorCollector<'src>,
+    ) -> Self {
         let source = buffed_sources.open_file(path);
         Self {
             buffed_sources,
             path,
             source,
             iter: source.char_indices().peekable(),
+            err_collector,
         }
     }
 
     /// Parse an identifer *or a keyword*, starting from the second character
     /// Will always return `Some(...)`, just so it is consistent with other `parse_` functions
-    fn parse_identifier(&mut self, start_index: usize) -> Option<Traced<'a, Token<'a>>> {
+    fn parse_identifier(&mut self, start_index: usize) -> Option<Traced<'src, Token<'src>>> {
         let mut end_index = start_index;
         while let Some((i, c)) = self.iter.peek() {
             if !c.is_alphanumeric_or_underscore() {
@@ -92,13 +102,13 @@ impl<'a> TokenStream<'a> {
         &mut self,
         start_index: usize,
         first_ch: char,
-    ) -> Option<Traced<'a, Token<'a>>> {
+    ) -> Option<Traced<'src, Token<'src>>> {
         let mut end_index = start_index;
         let mut val = first_ch as u64 - ('0' as u64);
         if val == 0 {
             // could be 0x, 0o, 0d, 0b prefix numbers
-            let second_char = if let Some((_, c)) = self.iter.peek() {
-                c
+            let (suffix_index, second_char) = if let Some(x) = self.iter.peek() {
+                *x
             } else {
                 let token = Token::Number(NumValue::U(0));
                 return Some(token.wrap_loc((self.path, start_index, end_index)));
@@ -172,7 +182,6 @@ impl<'a> TokenStream<'a> {
                 }
                 '.' => todo!("Parse floating point numbers"),
                 c if c.is_numeric() => {
-                    let second_char = *second_char;
                     self.iter.next();
                     val += second_char as u64 - ('0' as u64);
                     while let Some((i, c)) = self.iter.peek() {
@@ -188,10 +197,12 @@ impl<'a> TokenStream<'a> {
                     let token = Token::Number(NumValue::U(val));
                     Some(token.wrap_loc((self.path, start_index, end_index)))
                 }
-                c if c.is_alphabetic_or_underscore() => panic!(
-                    "Expects 0~9, x, o, d, b after `0`, found `{}`",
-                    c.escape_default()
-                ),
+                c if c.is_alphabetic_or_underscore() => {
+                    ErrorContent::InvalidIntSuffix(c)
+                        .wrap((self.path, suffix_index))
+                        .collect_into(self.err_collector);
+                    None
+                }
                 _ => Some(Token::Number(NumValue::U(0)).wrap_loc((
                     self.path,
                     start_index,
@@ -218,111 +229,138 @@ impl<'a> TokenStream<'a> {
         }
     }
 
-    fn parse_string_escape(&mut self) -> char {
-        match self.iter.next().expect("Unexpected EOF after backslash").1 {
+    fn parse_string_escape(
+        &mut self,
+        str_or_char: StrOrChar,
+        i: usize,
+    ) -> Result<char, Error<'src>> {
+        macro_rules! eof_err {
+            () => {
+                ErrorContent::EofInStringOrChar(str_or_char)
+            };
+        }
+        let escape_char = self.iter.next().ok_or(eof_err!().wrap((self.path, i)))?.1;
+        match escape_char {
             'x' => {
-                let (_, ch) = self
-                    .iter
-                    .next()
-                    .expect("Unexpected EOF after `\\x` escape sequence");
+                let (i0, ch) = self.iter.next().ok_or(eof_err!().wrap((self.path, i)))?;
                 let digit0 = hex_char_to_digit!(ch, u8);
-                let (_, ch) = self
-                    .iter
-                    .next()
-                    .expect("Unexpected EOF after `\\x` escape sequence");
+                let (i1, ch) = self.iter.next().ok_or(eof_err!().wrap((self.path, i0)))?;
                 let digit1 = hex_char_to_digit!(ch, u8);
-                if digit0 > 15 || digit1 > 15 {
-                    panic!("Non-hex digit following `\\x` in escape sequence")
+                if digit0 > 15 {
+                    ErrorContent::NumericEscNonHexDigit
+                        .wrap((self.path, i1))
+                        .collect_into(self.err_collector)
                 }
-                (digit0 * 16 + digit1) as char
+                if digit1 > 15 {
+                    ErrorContent::NumericEscNonHexDigit
+                        .wrap((self.path, i1))
+                        .collect_into(self.err_collector)
+                }
+                Ok((digit0 * 16 + digit1) as char)
             }
             'u' => {
-                let (_, ch) = self
-                    .iter
-                    .next()
-                    .expect("Unexpected EOF after `\\x` escape sequence");
+                let (i, ch) = self.iter.next().ok_or(eof_err!().wrap((self.path, i)))?;
                 if ch != '{' {
-                    panic!("Expects `{{` after `\\u` in escape sequence");
+                    return Err(ErrorContent::UnicodeEscNoOpeningBrace.wrap((self.path, i)));
                 }
                 let mut val = 0u32;
                 let mut count = 0usize;
-                while let Some((_, ch)) = self.iter.next_if(|&(_, c)| c != '}') {
+                while let Some((i, ch)) = self.iter.next_if(|&(_, c)| c != '}') {
                     count += 1;
                     val *= 16;
                     if count > 6 {
-                        panic!("Only 6 hex digits are allowed in \\u{{...}} escape sequence")
+                        return Err(ErrorContent::UnicodeEscOverflow.wrap((self.path, i)));
                     }
                     let digit = hex_char_to_digit!(ch, u32);
                     if digit > 15 {
-                        panic!("Only hex digits are allowed in \\u{{...}} escape sequence")
+                        return Err(ErrorContent::UnicodeEscNonHexDigit.wrap((self.path, i)));
                     }
                     val += digit;
                 }
                 match self.iter.next() {
-                    Some((_, '}')) => (),
-                    Some((_, c)) => panic!(
-                        "Expects `}}` at the end of \\u{{...}} escape sequence, found `{}`",
-                        c.escape_debug()
-                    ),
-                    None => {
-                        panic!("Expects `}}` at the end of \\u{{...}} escape sequence, found EOF")
+                    Some((_, '}')) => Ok(unsafe { char::from_u32_unchecked(val) }),
+                    Some((i, _)) => {
+                        Err(ErrorContent::UnicodeEscNoClosingBrace.wrap((self.path, i)))
                     }
+                    None => Err(eof_err!().wrap((self.path, i + count))),
                 }
-                unsafe { char::from_u32_unchecked(val) }
             }
-            'n' => '\n',
-            'r' => '\r',
-            't' => '\t',
-            '\\' => '\\',
-            '0' => '\0',
-            '\'' => '\'',
-            '\"' => '\"',
-            c => panic!("Unsupported escape code `{}`", c.escape_debug()),
+            'n' => Ok('\n'),
+            'r' => Ok('\r'),
+            't' => Ok('\t'),
+            '\\' => Ok('\\'),
+            '0' => Ok('\0'),
+            '\'' => Ok('\''),
+            '\"' => Ok('\"'),
+            c => Err(ErrorContent::InvalidCharEsc(c).wrap((self.path, i))),
         }
     }
 
-    /// Parse a character literal
-    fn parse_char(&mut self, start_index: usize) -> Option<Traced<'a, Token<'a>>> {
+    /// Parse a character literal, starting from the character after quote sign
+    /// Errors are handled internally
+    fn parse_char(&mut self, start_index: usize) -> Option<Traced<'src, Token<'src>>> {
         match self
             .iter
             .next()
-            .expect("Unexpected EOF after single quote sign")
+            .ok_or(ErrorContent::EofInStringOrChar(StrOrChar::Str).wrap((self.path, start_index)))
+            .collect_err(self.err_collector)?
         {
-            (_, '\\') => {
-                let c = self.parse_string_escape();
-                if let (end_index, '\'') = self
+            (i, '\\') => {
+                let esc_char = self
+                    .parse_string_escape(StrOrChar::Char, i)
+                    .collect_err(self.err_collector)
+                    .unwrap_or('\0');
+                let (end_index, next_char) = self
                     .iter
                     .next()
-                    .expect("Expects single quote sign, found EOF")
-                {
-                    Some(Token::Character(c).wrap_loc((self.path, start_index, end_index)))
+                    .ok_or(ErrorContent::EofInStringOrChar(StrOrChar::Char).wrap((self.path, i)))
+                    .collect_err(self.err_collector)?;
+                if next_char == '\'' {
+                    Some(Token::Character(esc_char).wrap_loc((self.path, start_index, end_index)))
                 } else {
-                    panic!("Expects single quote sign");
+                    ErrorContent::CharNoEndQuote
+                        .wrap((self.path, end_index))
+                        .collect_into(self.err_collector);
+                    None
                 }
             }
-            (_, c) => {
-                if let (end_index, '\'') = self
+            (i, c) => {
+                let (end_index, next_char) = self
                     .iter
                     .next()
-                    .expect("Expects single quote sign, found EOF")
-                {
+                    .ok_or(ErrorContent::EofInStringOrChar(StrOrChar::Str).wrap((self.path, i)))
+                    .collect_err(self.err_collector)?;
+                if next_char == '\'' {
                     let token = Token::Character(c);
                     Some(token.wrap_loc((self.path, start_index, end_index)))
                 } else {
-                    panic!("Expects single quote sign");
+                    ErrorContent::CharNoEndQuote
+                        .wrap((self.path, end_index))
+                        .collect_into(self.err_collector);
+                    None
                 }
             }
         }
     }
 
-    /// Parse a string literal
-    /// Start from the character after quote sign
-    fn parse_string(&mut self, start_index: usize) -> Option<Traced<'a, Token<'a>>> {
+    /// Parse a string literal, start from the character after quote sign
+    /// Errors handled internally
+    fn parse_string(&mut self, start_index: usize) -> Option<Traced<'src, Token<'src>>> {
         let mut parsed_string = String::new();
         let mut end_index = start_index;
-        while let Some((_, ch)) = self.iter.next_if(|&(_, c)| c != '\"') {
+        if self.iter.peek().is_none() {
+            ErrorContent::EofInStringOrChar(StrOrChar::Str)
+                .wrap((self.path, start_index))
+                .collect_into(self.err_collector);
+            return None;
+        }
+        while let Some((current_index, ch)) = self.iter.next_if(|&(_, c)| c != '\"') {
             if ch == '\\' {
-                parsed_string.push(self.parse_string_escape());
+                let esc_char = self
+                    .parse_string_escape(StrOrChar::Str, current_index)
+                    .collect_err(self.err_collector)
+                    .unwrap_or('\0');
+                parsed_string.push(esc_char);
             } else {
                 parsed_string.push(ch);
             }
@@ -460,7 +498,12 @@ impl<'a> Iterator for TokenStream<'a> {
                     }
                     _ => Some(Token::Gr.wrap_loc((self.path, i, i))),
                 },
-                (_, c) => panic!("Unexpected character `{}`", c.escape_debug()),
+                (i, c) => {
+                    ErrorContent::InvalidCharacter(c)
+                        .wrap((self.path, i))
+                        .collect_into(self.err_collector);
+                    continue;
+                }
             };
         }
     }

@@ -1,5 +1,5 @@
 fn main() -> u32 {
-    printf("hello, world\n");
-    a = 1;
+    printf("hello\l, world\n");
+    a = 0l12;
     return 0;
 }

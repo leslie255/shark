@@ -1,26 +1,30 @@
-#![allow(dead_code)]
 pub mod location;
+
+use std::cell::RefCell;
 
 use location::{IntoSourceLoc, SourceLocation};
 
 use crate::buffered_content::BufferedContent;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum StringOrChar {
-    String,
+pub enum StrOrChar {
+    Str,
     Char,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Clone)]
-pub enum ErrorContent<'a> {
+pub enum ErrorContent<'src> {
     // --- Tokenizer stage
     // String or character literal
-    EofInStringOrChar(StringOrChar),
+    EofInStringOrChar(StrOrChar),
     UnicodeEscOverflow,
     UnicodeEscNonHexDigit,
+    UnicodeEscNoOpeningBrace,
     UnicodeEscNoClosingBrace,
     NumericEscNonHexDigit,
     InvalidCharEsc(char),
+    CharNoEndQuote,
 
     // Number literal
     /// "Expects 0~9, x, o, d, b after `0`"
@@ -28,10 +32,10 @@ pub enum ErrorContent<'a> {
 
     InvalidCharacter(char),
 
-    VarNotExist(&'a str),
+    VarNotExist(&'src str),
 }
-impl<'a> ErrorContent<'a> {
-    pub fn package(self, loc: impl IntoSourceLoc<'a>) -> Error<'a> {
+impl<'src> ErrorContent<'src> {
+    pub fn wrap(self, loc: impl IntoSourceLoc<'src>) -> Error<'src> {
         Error {
             location: loc.into_source_location(),
             content: self,
@@ -39,46 +43,52 @@ impl<'a> ErrorContent<'a> {
     }
     fn name(&self) -> &str {
         match self {
-            ErrorContent::EofInStringOrChar(str_or_char) => match str_or_char {
-                StringOrChar::String => "eof in string literal",
-                StringOrChar::Char => "eof in character literal",
+            Self::EofInStringOrChar(str_or_char) => match str_or_char {
+                StrOrChar::Str => "eof in string literal",
+                StrOrChar::Char => "eof in character literal",
             },
-            ErrorContent::UnicodeEscOverflow => "unicode escape overflow",
-            ErrorContent::UnicodeEscNonHexDigit => "invalid unicode escape",
-            ErrorContent::UnicodeEscNoClosingBrace => "unicode escape no terminater",
-            ErrorContent::NumericEscNonHexDigit => "invalid numeric escape",
-            ErrorContent::InvalidCharEsc(_) => "invalid character escape",
-            ErrorContent::InvalidIntSuffix(_) => "invalid integer suffix",
-            ErrorContent::InvalidCharacter(_) => "invalid character",
-            ErrorContent::VarNotExist(_) => "variable does not exist",
+            Self::UnicodeEscOverflow => "unicode escape overflow",
+            Self::UnicodeEscNonHexDigit => "invalid unicode escape",
+            Self::UnicodeEscNoOpeningBrace => "no opening brace for unicode escape",
+            Self::UnicodeEscNoClosingBrace => "no terminating brace for unicode escape",
+            Self::NumericEscNonHexDigit => "invalid numeric escape",
+            Self::InvalidCharEsc(_) => "invalid character escape",
+            Self::InvalidIntSuffix(_) => "invalid integer suffix",
+            Self::CharNoEndQuote => "missing terminating quote for character literal",
+            Self::InvalidCharacter(_) => "invalid character",
+            Self::VarNotExist(_) => "variable does not exist",
         }
     }
     fn print_description(&self) {
         match self {
-            ErrorContent::EofInStringOrChar(str_or_char) => match str_or_char {
-                StringOrChar::String => print!("Unexpected EOF in string literal"),
-                StringOrChar::Char => print!("Unexpected EOF in character literal"),
+            Self::EofInStringOrChar(str_or_char) => match str_or_char {
+                StrOrChar::Str => print!("Unexpected EOF in string literal"),
+                StrOrChar::Char => print!("Unexpected EOF in character literal"),
             },
-            ErrorContent::UnicodeEscOverflow => {
+            Self::UnicodeEscOverflow => {
                 print!("Unicode escape must have at most 6 hex digits")
             }
-            ErrorContent::UnicodeEscNonHexDigit => {
+            Self::UnicodeEscNonHexDigit => {
                 print!("Unicode escape must contain only hex digits")
             }
-            ErrorContent::UnicodeEscNoClosingBrace => print!("No `}}` in unicode escape"),
-            ErrorContent::NumericEscNonHexDigit => {
+            Self::UnicodeEscNoOpeningBrace => {
+                print!("Expects a `{{` after `\\u` for unicod escape")
+            }
+            Self::UnicodeEscNoClosingBrace => print!("No `}}` in unicode escape"),
+            Self::NumericEscNonHexDigit => {
                 print!("Numeric escape can only have hex digits")
             }
-            ErrorContent::InvalidCharEsc(c) => {
+            Self::InvalidCharEsc(c) => {
                 print!("Unknown character escape `{}`", c.escape_default())
             }
-            ErrorContent::InvalidIntSuffix(c) => {
+            Self::CharNoEndQuote => print!("missing terminating quote for character literal"),
+            Self::InvalidIntSuffix(c) => {
                 print!("Unkown suffix for number literal `0{}`", c)
             }
-            ErrorContent::InvalidCharacter(c) => {
+            Self::InvalidCharacter(c) => {
                 print!("Invalid character `{}`", c.escape_default())
             }
-            ErrorContent::VarNotExist(s) => {
+            Self::VarNotExist(s) => {
                 print!("Variable `{}` not found in the current scope", s)
             }
         }
@@ -86,40 +96,36 @@ impl<'a> ErrorContent<'a> {
 }
 
 #[derive(Debug, Clone)]
-pub struct Error<'a> {
-    pub location: SourceLocation<'a>,
-    pub content: ErrorContent<'a>,
+pub struct Error<'src> {
+    pub location: SourceLocation<'src>,
+    pub content: ErrorContent<'src>,
 }
 
-impl<'a> Error<'a> {
-    pub fn collect_into(self, collector: &mut ErrorCollector<'a>) {
+impl<'src> Error<'src> {
+    pub fn collect_into(self, collector: &ErrorCollector<'src>) {
         collector.collect(self)
     }
 }
 
 #[derive(Debug, Clone, Default)]
-pub struct ErrorCollector<'a>(Vec<Error<'a>>);
+pub struct ErrorCollector<'src> {
+    errors: RefCell<Vec<Error<'src>>>,
+}
 
 impl<'a> ErrorCollector<'a> {
-    pub fn collect(&mut self, e: Error<'a>) {
-        self.0.push(e);
+    pub fn collect(&self, e: Error<'a>) {
+        self.errors.borrow_mut().push(e);
     }
-    #[allow(unused)]
     /// Print the errors in it's final presentation format, and remove all the errors
-    pub fn print_and_dump_all(&mut self, sources: &'a BufferedContent<'a>) {
+    pub fn print_and_dump_all(&self, sources: &'a BufferedContent<'a>) {
         // TODO: If multiple errors happen in one line, print them in one block
-        let first_error = if let Some(e) = self.0.first() {
-            e
-        } else {
-            return;
-        };
-        let mut current_filename = first_error.location.file_name;
-        let mut current_file_content = sources.open_file(current_filename);
-        for error in &self.0 {
+        let mut current_filename = "";
+        let mut current_file_content = "";
+        for error in self.errors.borrow().iter() {
             // TODO: this is really inefficient since it has to iterate from the beginning of the
             // file for every error, but optimize it later lol
             let mut line_num = 0usize;
-            let mut line_start = 0usize;
+            let mut line_start: usize;
             let mut line_end = 0usize;
             let error_filename = error.location.file_name;
             if current_filename != error_filename {
@@ -132,9 +138,9 @@ impl<'a> ErrorCollector<'a> {
                     line_start = line_end;
                     line_end = i;
                     let error_range = error.location.range;
-                    if line_start <= error_range.0 {
+                    if line_start <= error_range.0 && line_end >= error_range.1 {
                         let len = error_range.1 - error_range.0;
-                        let col_num = error_range.0.max(line_start);
+                        let col_num = error_range.0 - line_start;
                         print_err(
                             error,
                             current_file_content,
@@ -148,7 +154,7 @@ impl<'a> ErrorCollector<'a> {
                 }
             }
         }
-        self.0.clear()
+        self.errors.borrow_mut().clear()
     }
 }
 
@@ -190,4 +196,23 @@ fn print_err(
     println!();
     err.content.print_description();
     print!("\n\n");
+}
+
+pub trait CollectIfErr<'src> {
+    type Product;
+    fn collect_err(self, err_collector: &ErrorCollector<'src>) -> Self::Product;
+}
+
+impl<'src, T> CollectIfErr<'src> for Result<T, Error<'src>> {
+    type Product = Option<T>;
+
+    fn collect_err(self, err_collector: &ErrorCollector<'src>) -> Self::Product {
+        match self {
+            Ok(shitfuck) => Some(shitfuck),
+            Err(e) => {
+                err_collector.collect(e);
+                None
+            }
+        }
+    }
 }
