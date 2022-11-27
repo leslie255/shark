@@ -5,8 +5,8 @@ use std::{
 
 /// Describes the location of a token or an AST node in source code
 #[derive(Clone, Copy, PartialEq, Eq)]
-pub struct SourceLocation<'a> {
-    pub file_name: &'a str,
+pub struct SourceLocation<'src> {
+    pub file_name: &'src str,
     pub range: (usize, usize),
 }
 impl Debug for SourceLocation<'_> {
@@ -75,38 +75,67 @@ impl<'a> IntoSourceLoc<'a> for (&'a str, Range<usize>) {
 
 /// A wrapper for attaching a source location to a token or AST node
 #[derive(Clone, PartialEq)]
-pub struct Traced<'a, T>(T, SourceLocation<'a>);
-impl<'a, T> Traced<'a, T> {
-    pub fn new(inner: T, source_location: impl IntoSourceLoc<'a>) -> Self {
-        Self(inner, source_location.into_source_location())
+pub struct Traced<'src, T> {
+    inner: T,
+    src_loc: SourceLocation<'src>,
+}
+
+impl<'src, T> Traced<'src, T> {
+    /// Wrap an thing into `Traced`
+    /// Call this function by...
+    /// ```
+    /// Traced::new(x, (file_name, start, end))
+    /// Traced::new(x, (file_name, (start, end)))
+    /// Traced::new(x, (file_name, start..end))
+    /// Traced::new(x, (file_name, pos))
+    /// Traced::new(x, SourceLocation {file_name, range: (start, end)})
+    /// ```
+    /// ... Or anything else that implements `IntoSourceLoc`
+    pub fn new(inner: T, src_loc: impl IntoSourceLoc<'src>) -> Self {
+        Self {
+            inner,
+            src_loc: src_loc.into_source_location(),
+        }
     }
-    pub fn into_inner(&self) -> &T {
-        &self.0
+    /// Returns the wrapped content by reference
+    #[inline]
+    #[must_use]
+    pub fn inner(&self) -> &T {
+        &self.inner
     }
-    pub fn source_location(&self) -> SourceLocation {
-        self.1
+    /// Consumes `self` and returns the wrapped content
+    #[inline]
+    #[must_use]
+    pub fn into_inner(self) -> T {
+        self.inner
+    }
+    /// Returns the attached source location
+    #[inline]
+    #[must_use]
+    pub fn src_loc(&self) -> SourceLocation<'src> {
+        self.src_loc
     }
 }
-impl<'a, T> Deref for Traced<'a, T> {
+impl<'src, T> Deref for Traced<'src, T> {
     type Target = T;
 
     fn deref(&self) -> &Self::Target {
-        &self.0
+        &self.inner
     }
 }
-impl<'a, T> Debug for Traced<'a, T>
+impl<'src, T> Debug for Traced<'src, T>
 where
     T: Debug,
 {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        self.into_inner().fmt(f)
+        self.deref().fmt(f)
     }
 }
-impl<'a, T> Display for Traced<'a, T>
+impl<'src, T> Display for Traced<'src, T>
 where
     T: Display,
 {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        self.into_inner().fmt(f)
+        self.deref().fmt(f)
     }
 }

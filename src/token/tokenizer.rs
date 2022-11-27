@@ -33,25 +33,25 @@ macro_rules! hex_char_to_digit {
     };
 }
 
-/// Tokenizes a file on-the-pass, implements an iterator for scanning through a file
+/// Tokenizes a file incrementally, implements `Iterator`
 #[derive(Debug)]
-pub struct TokenStream<'a> {
+pub struct TokenStream<'src> {
     #[allow(dead_code)] // for expanding `#include` macros in the future
-    buffed_sources: &'a BufferedContent<'a>,
-    path: &'a str,
-    source: &'a str,
-    iter: Peekable<CharIndices<'a>>,
-    err_collector: &'a ErrorCollector<'a>,
+    buffers: &'src BufferedContent<'src>,
+    path: &'src str,
+    source: &'src str,
+    iter: Peekable<CharIndices<'src>>,
+    err_collector: &'src ErrorCollector<'src>,
 }
 impl<'src> TokenStream<'src> {
     pub fn new(
         path: &'src str,
-        buffed_sources: &'src BufferedContent<'src>,
+        buffers: &'src BufferedContent<'src>,
         err_collector: &'src ErrorCollector<'src>,
     ) -> Self {
-        let source = buffed_sources.open_file(path);
+        let source = buffers.read_file(path);
         Self {
-            buffed_sources,
+            buffers,
             path,
             source,
             iter: source.char_indices().peekable(),
@@ -371,8 +371,8 @@ impl<'src> TokenStream<'src> {
         Some(Token::String(parsed_string).wrap_loc((self.path, start_index, end_index)))
     }
 }
-impl<'a> Iterator for TokenStream<'a> {
-    type Item = Traced<'a, Token<'a>>;
+impl<'src> Iterator for TokenStream<'src> {
+    type Item = Traced<'src, Token<'src>>;
 
     fn next(&mut self) -> Option<Self::Item> {
         loop {

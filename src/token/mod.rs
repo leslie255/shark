@@ -20,6 +20,21 @@ impl Debug for NumValue {
         }
     }
 }
+impl From<u64> for NumValue {
+    fn from(u: u64) -> Self {
+        Self::U(u)
+    }
+}
+impl From<i64> for NumValue {
+    fn from(i: i64) -> Self {
+        Self::I(i)
+    }
+}
+impl From<f64> for NumValue {
+    fn from(f: f64) -> Self {
+        Self::F(f)
+    }
+}
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Token<'a> {

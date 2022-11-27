@@ -1,31 +1,42 @@
 #![allow(dead_code)]
 
-mod parser;
-mod type_expr;
+pub mod parser;
+pub mod type_expr;
 
 use std::{fmt::Debug, ops::Deref};
 
-use crate::{error::location::Traced, token::NumValue};
+use crate::{
+    error::location::{IntoSourceLoc, Traced},
+    token::NumValue,
+};
 use type_expr::TypeExpr;
 
 /// All AST nodes are stored inside a pool
 /// Uses `AstNodeRef` for inter-reference between nodes
-#[derive(Debug, Clone)]
-pub struct Ast<'a> {
-    node_pool: Vec<Traced<'a, AstNode<'a>>>,
+#[derive(Debug, Clone, Default)]
+pub struct Ast<'src> {
+    node_pool: Vec<Traced<'src, AstNode<'src>>>,
     pub str_pool: Vec<String>,
-    pub root_nodes: Vec<Traced<'a, AstNodeRef<'a>>>,
+    pub root_nodes: Vec<Traced<'src, AstNodeRef<'src>>>,
 }
 
-impl<'a> Ast<'a> {
+impl<'src> Ast<'src> {
     /// Add a new node to pool
     /// Returns a reference to that node
-    pub fn add_to_pool(&mut self, new_node: Traced<'a, AstNode<'a>>) -> AstNodeRef<'a> {
+    #[must_use]
+    pub fn add_node(&mut self, new_node: Traced<'src, AstNode<'src>>) -> AstNodeRef<'src> {
         self.node_pool.push(new_node);
-        let node_ref = self.node_pool.last().unwrap();
-        AstNodeRef {
-            raw_ptr: node_ref as *const Traced<'a, AstNode>,
-        }
+        let i = self.node_pool.len() - 1;
+        let node_ref = AstNodeRef {
+            pool: &self.node_pool as *const Vec<Traced<'src, AstNode<'src>>>,
+            i,
+        };
+        node_ref
+    }
+    /// Add a new string to `str_pool` and return the index of that string
+    pub fn add_str(&mut self, str: String) -> usize {
+        self.str_pool.push(str);
+        self.str_pool.len() - 1
     }
 }
 
@@ -38,6 +49,7 @@ pub enum AstNode<'a> {
     Number(NumValue),
     /// By index in `Ast.str_pool`
     String(usize),
+    Char(char),
 
     // --- Operators
     /// add, sub, mul, div
@@ -54,8 +66,6 @@ pub enum AstNode<'a> {
     MathOpAssign(MathOpKind, AstNodeRef<'a>, AstNodeRef<'a>),
     /// |=, &=, ^=
     BitOpAssign(BitOpKind, AstNodeRef<'a>, AstNodeRef<'a>),
-    /// ~=
-    BitNotAssign(AstNodeRef<'a>, AstNodeRef<'a>),
     Let(&'a str, Option<TypeExpr<'a>>, Option<AstNodeRef<'a>>),
 
     // --- Reference operations
@@ -67,19 +77,25 @@ pub enum AstNode<'a> {
     If(IfExpr<'a>),
     Loop(Vec<AstNodeRef<'a>>),
 }
+impl<'src> AstNode<'src> {
+    pub fn wrap_loc(self, loc: impl IntoSourceLoc<'src>) -> Traced<'src, Self> {
+        Traced::new(self, loc.into_source_location())
+    }
+}
 
 /// A reference to an AstNode
 /// Should only refer to an AstNode owned by Ast
-/// Cannot be initialized independently
+/// Should only be initialized by an Ast
 #[derive(Clone, Copy)]
 pub struct AstNodeRef<'a> {
-    raw_ptr: *const Traced<'a, AstNode<'a>>,
+    pool: *const Vec<Traced<'a, AstNode<'a>>>,
+    i: usize,
 }
 impl<'a> Deref for AstNodeRef<'a> {
-    type Target = AstNode<'a>;
+    type Target = Traced<'a, AstNode<'a>>;
 
     fn deref(&self) -> &Self::Target {
-        unsafe { self.raw_ptr.as_ref().unwrap() }
+        unsafe { self.pool.as_ref().unwrap().get(self.i).unwrap() }
     }
 }
 impl<'a> Debug for AstNodeRef<'a> {
@@ -111,6 +127,7 @@ pub enum MathOpKind {
     Sub,
     Mul,
     Div,
+    Mod,
 }
 
 /// Type of a bitwise operations
@@ -120,4 +137,7 @@ pub enum BitOpKind {
     And,
     Or,
     Xor,
+
+    Sl,
+    Sr,
 }

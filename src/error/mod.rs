@@ -12,10 +12,11 @@ pub enum StrOrChar {
     Char,
 }
 
-#[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub enum ErrorContent<'src> {
     // --- Tokenizer stage
+    InvalidCharacter(char),
+
     // String or character literal
     EofInStringOrChar(StrOrChar),
     UnicodeEscOverflow,
@@ -30,8 +31,11 @@ pub enum ErrorContent<'src> {
     /// "Expects 0~9, x, o, d, b after `0`"
     InvalidIntSuffix(char),
 
-    InvalidCharacter(char),
+    // --- AST Parsing stage
+    UnexpectedToken,
+    UnexpectedEOF,
 
+    #[allow(dead_code)]
     VarNotExist(&'src str),
 }
 impl<'src> ErrorContent<'src> {
@@ -56,6 +60,8 @@ impl<'src> ErrorContent<'src> {
             Self::InvalidIntSuffix(_) => "invalid integer suffix",
             Self::CharNoEndQuote => "missing terminating quote for character literal",
             Self::InvalidCharacter(_) => "invalid character",
+            Self::UnexpectedToken => "unexpected token",
+            Self::UnexpectedEOF => "unexpected EOF",
             Self::VarNotExist(_) => "variable does not exist",
         }
     }
@@ -88,6 +94,8 @@ impl<'src> ErrorContent<'src> {
             Self::InvalidCharacter(c) => {
                 print!("Invalid character `{}`", c.escape_default())
             }
+            Self::UnexpectedToken => print!("Unexpected token"),
+            Self::UnexpectedEOF => print!("unexpected EOF"),
             Self::VarNotExist(s) => {
                 print!("Variable `{}` not found in the current scope", s)
             }
@@ -130,7 +138,7 @@ impl<'a> ErrorCollector<'a> {
             let error_filename = error.location.file_name;
             if current_filename != error_filename {
                 current_filename = error_filename;
-                current_file_content = sources.open_file(current_filename);
+                current_file_content = sources.read_file(current_filename);
             }
             for (i, ch) in current_file_content.char_indices() {
                 line_num += 1;
