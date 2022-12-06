@@ -4,6 +4,16 @@ use crate::error::location::{IntoSourceLoc, Traced};
 
 pub mod tokenizer;
 
+/// Because of macros expansions, there are multiple character iterators existing at the same time,
+/// they are stored in a stack
+/// Everytime a macro expansion is needed, a new iterator will be pushed onto the stack
+/// When fetching
+/// For fetching a character, a character is attempted to be fetched from the top most of the
+/// character, if that iterator has depleted, it will be poped off and the process will be repeated
+/// again until the stack is empty
+/// In some cases, the iterator will output tokens instead of characters
+mod iterstack;
+
 #[allow(dead_code)]
 #[derive(Clone, Copy, PartialEq)]
 pub enum NumValue {
