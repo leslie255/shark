@@ -33,11 +33,10 @@ impl<'src> AstParser<'src> {
     }
     /// Operator precedence is similar to C, expect:
     /// - Slot for tenary conditional operator `?:` as replaced by `as`
-    /// - Slot for tenary conditional operator as replaced by `as`
     fn parse_expr(&mut self, precedence: usize) -> Option<Traced<'src, AstNode<'src>>> {
         let mut node: Traced<'src, AstNode<'src>>;
         loop {
-            let token = {let t = self.token_stream.next()?;println!("{t:?}");t};
+            let token = self.token_stream.next()?;
             let token_location = token.src_loc();
             match token.into_inner() {
                 Token::Identifier(id) => node = AstNode::Identifier(id).wrap_loc(token_location),
@@ -69,7 +68,7 @@ impl<'src> AstParser<'src> {
                         if precedence <= $precedence {
                             return Some(node);
                         }
-                        let token_loc = {let t = self.token_stream.next()?;println!("{t:?}");t}.src_loc();
+                        let token_loc = self.token_stream.next()?.src_loc();
                         let lhs_node_ref = self.ast.add_node(node);
                         let rhs_node = self
                             .parse_expr($precedence)

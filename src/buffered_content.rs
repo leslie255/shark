@@ -13,10 +13,17 @@ use std::{
 pub struct BufferedContent<'src> {
     /// Uses `UnsafeCell` internally because when a source string is stored in the map it is never
     /// dropped or changed, so returning a reference of it is always safe
+    ///
+    /// (It may look like that all already existing references will be invalid when the `HashMap`
+    /// is reallocated, and therefore causeing segment fault, but since the struct never gives out
+    /// a reference to the `String`, but rather the inner `&'src str` inside the `String`, it would
+    /// not matter if the `String` is reallocated as long as the inner `str` is not mutated)
+    ///
     /// Uses internal mutability because this struct is borrowed by the both the main compiler and
-    /// the error collector, and it cannot be `mut` borrowed two times,
-    /// Also for all that the outside user is concerned, whether or not `read_file` reads from the
-    /// disk or from the buffered string would not matter, so they shouldn't worry about `mut`
+    /// the error collector, and it cannot be `mut` borrowed multiple times,
+    ///
+    /// Also, for all that the outside world is concerned, whether or not `read_file` reads from
+    /// the disk or from the buffered string would not matter, so they shouldn't worry about `mut`
     map: RefCell<HashMap<&'src str, UnsafeCell<String>>>,
 }
 impl<'src> BufferedContent<'src> {

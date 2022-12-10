@@ -10,7 +10,7 @@ use crate::{
     token::iterstack::OptionCharOrToken,
 };
 
-trait CharCustomFuncs {
+pub(crate) trait CharCustomFuncs {
     fn is_alphabetic_or_underscore(self) -> bool;
     fn is_alphanumeric_or_underscore(self) -> bool;
 }
