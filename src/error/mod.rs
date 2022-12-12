@@ -138,7 +138,7 @@ impl<'a> ErrorCollector<'a> {
             let error_filename = error.location.file_name;
             if current_filename != error_filename {
                 current_filename = error_filename;
-                current_file_content = sources.read_file(current_filename);
+                current_file_content = sources.read_file(current_filename).as_str();
             }
             for (i, ch) in current_file_content.char_indices() {
                 line_num += 1;

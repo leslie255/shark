@@ -251,7 +251,7 @@ unsafe fn next_code_point_indexed<'a, I: Iterator<Item = &'a u8>>(
     Some((increments, ch))
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct SourceCharIndices<'a> {
     iter: slice::Iter<'a, u8>,
     i: usize,

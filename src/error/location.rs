@@ -3,6 +3,8 @@ use std::{
     ops::{Deref, Range},
 };
 
+use crate::string::SourceIndex;
+
 /// Describes the location of a token or an AST node in source code
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub struct SourceLocation<'src> {
@@ -38,6 +40,38 @@ pub trait IntoSourceLoc<'a> {
 impl<'a> IntoSourceLoc<'a> for SourceLocation<'a> {
     fn into_source_location(self) -> SourceLocation<'a> {
         self
+    }
+}
+impl<'a> IntoSourceLoc<'a> for (&'a str, SourceIndex<'a>) {
+    fn into_source_location(self) -> SourceLocation<'a> {
+        SourceLocation {
+            file_name: self.0,
+            range: (self.1.position, self.1.position),
+        }
+    }
+}
+impl<'a> IntoSourceLoc<'a> for (&'a str, (SourceIndex<'a>, SourceIndex<'a>)) {
+    fn into_source_location(self) -> SourceLocation<'a> {
+        SourceLocation {
+            file_name: self.0,
+            range: (self.1 .0.position, self.1 .1.position),
+        }
+    }
+}
+impl<'a> IntoSourceLoc<'a> for (&'a str, SourceIndex<'a>, SourceIndex<'a>) {
+    fn into_source_location(self) -> SourceLocation<'a> {
+        SourceLocation {
+            file_name: self.0,
+            range: (self.1.position, self.2.position),
+        }
+    }
+}
+impl<'a> IntoSourceLoc<'a> for (&'a str, Range<SourceIndex<'a>>) {
+    fn into_source_location(self) -> SourceLocation<'a> {
+        SourceLocation {
+            file_name: self.0,
+            range: (self.1.start.position, self.1.end.position),
+        }
     }
 }
 impl<'a> IntoSourceLoc<'a> for (&'a str, usize) {

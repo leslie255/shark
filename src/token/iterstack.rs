@@ -1,26 +1,27 @@
-use std::str::CharIndices;
-
-use crate::error::{
-    location::{IntoSourceLoc, Traced},
-    Error, ErrorContent,
+use crate::{
+    error::{
+        location::{IntoSourceLoc, Traced},
+        Error, ErrorContent,
+    },
+    string::{SourceCharIndices, SourceIndex, SourceString},
 };
 
 use super::{tokenizer::TokenStream, Token};
 
 #[derive(Debug)]
 pub enum IterStackItem<'src> {
-    Default(CharIndices<'src>),
-    Included(CharIndices<'src>),
+    Default(SourceCharIndices<'src>),
+    Included(SourceCharIndices<'src>),
     MacroExpand(TokenStream<'src>),
 }
 #[derive(Debug, Clone)]
 pub enum CharOrToken<'src> {
-    Char(usize, char),
+    Char(SourceIndex<'src>, char),
     Token(Traced<'src, Token<'src>>),
 }
 
 impl<'src> CharOrToken<'src> {
-    pub fn as_char(&self) -> Option<(usize, char)> {
+    pub fn as_char(&self) -> Option<(SourceIndex<'src>, char)> {
         if let &Self::Char(i, c) = self {
             Some((i, c))
         } else {
@@ -43,13 +44,13 @@ impl<'src> CharOrToken<'src> {
         }
     }
 }
-impl From<(usize, char)> for CharOrToken<'_> {
-    fn from(x: (usize, char)) -> Self {
+impl<'a> From<(SourceIndex<'a>, char)> for CharOrToken<'a> {
+    fn from(x: (SourceIndex<'a>, char)) -> Self {
         Self::Char(x.0, x.1)
     }
 }
-impl<'src> From<Traced<'src, Token<'src>>> for CharOrToken<'src> {
-    fn from(x: Traced<'src, Token<'src>>) -> Self {
+impl<'a> From<Traced<'a, Token<'a>>> for CharOrToken<'a> {
+    fn from(x: Traced<'a, Token<'a>>) -> Self {
         Self::Token(x)
     }
 }
@@ -77,18 +78,16 @@ pub struct IterStack<'src> {
     stack: Vec<IterStackItem<'src>>,
 }
 impl<'src> IterStack<'src> {
-    pub fn new(source: &'src str) -> Self {
-        let chars_iter = source.char_indices();
-        let stack_item = IterStackItem::Default(chars_iter);
+    pub fn new(source: &'src SourceString) -> Self {
+        let stack_item = IterStackItem::Default(source.char_indices());
         Self {
             stack: vec![stack_item],
         }
     }
     /// Push a new iterator onto the stack with the content of included file
     #[allow(dead_code)]
-    pub fn include_source(&mut self, source: &'src str) {
-        let chars_iter = source.char_indices();
-        let stack_item = IterStackItem::Included(chars_iter);
+    pub fn include_source(&mut self, source: &'src SourceString) {
+        let stack_item = IterStackItem::Included(source.char_indices());
         self.stack.push(stack_item);
     }
     /// Push a new iterator of tokens onto the stack containing tokens expanded from a macro

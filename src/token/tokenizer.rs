@@ -7,6 +7,7 @@ use super::{
 use crate::{
     buffered_content::BufferedContent,
     error::{location::Traced, CollectIfErr, Error, ErrorCollector, ErrorContent, StrOrChar},
+    string::{SourceIndex, SourceString},
     token::iterstack::OptionCharOrToken,
 };
 
@@ -40,7 +41,7 @@ pub struct TokenStream<'src> {
     #[allow(dead_code)] // for expanding `#include` macros in the future
     buffers: &'src BufferedContent<'src>,
     path: &'src str,
-    source: &'src str,
+    source: &'src SourceString,
     iter: Peekable<IterStack<'src>>,
     err_collector: &'src ErrorCollector<'src>,
 }
@@ -62,16 +63,20 @@ impl<'src> TokenStream<'src> {
 
     /// Parse an identifer *or a keyword*, starting from the second character
     /// Will always return `Some(...)`, just so it is consistent with other `parse_` functions
-    fn parse_identifier(&mut self, start_index: usize) -> Option<Traced<'src, Token<'src>>> {
+    fn parse_identifier(
+        &mut self,
+        start_index: SourceIndex<'src>,
+    ) -> Option<Traced<'src, Token<'src>>> {
         let mut end_index = start_index;
-        while let Some(CharOrToken::Char(i, c)) = self.iter.peek() {
+        while let Some(&CharOrToken::Char(i, c)) = self.iter.peek() {
             if !c.is_alphanumeric_or_underscore() {
-                end_index = *i;
                 break;
             }
+            end_index = i;
             self.iter.next();
         }
-        let str = &self.source[start_index..end_index];
+        println!();
+        let str = self.source.slice(start_index..end_index);
         match str {
             "as" => Some(Token::As.wrap_loc((self.path, start_index, end_index))),
             "break" => Some(Token::Break.wrap_loc((self.path, start_index, end_index))),
@@ -101,7 +106,7 @@ impl<'src> TokenStream<'src> {
     /// Unlike `parse_identifier(...)`, it does need to know the first character
     fn parse_number(
         &mut self,
-        start_index: usize,
+        start_index: SourceIndex<'src>,
         first_ch: char,
     ) -> Option<Traced<'src, Token<'src>>> {
         let mut end_index = start_index;
@@ -234,7 +239,7 @@ impl<'src> TokenStream<'src> {
     fn parse_string_escape(
         &mut self,
         str_or_char: StrOrChar,
-        i: usize,
+        i: SourceIndex<'src>,
     ) -> Result<char, Error<'src>> {
         macro_rules! eof_err {
             () => {
@@ -305,7 +310,7 @@ impl<'src> TokenStream<'src> {
                 match self.iter.next() {
                     Some(CharOrToken::Char(_, '}')) => Ok(unsafe { char::from_u32_unchecked(val) }),
                     Some(_) => Err(ErrorContent::UnicodeEscNoClosingBrace.wrap((self.path, i))),
-                    None => Err(eof_err!().wrap((self.path, i + count))),
+                    None => Err(eof_err!().wrap((self.path, i.position + count))),
                 }
             }
             'n' => Ok('\n'),
@@ -321,7 +326,7 @@ impl<'src> TokenStream<'src> {
 
     /// Parse a character literal, starting from the character after quote sign
     /// Errors are handled internally
-    fn parse_char(&mut self, start_index: usize) -> Option<Traced<'src, Token<'src>>> {
+    fn parse_char(&mut self, start_index: SourceIndex<'src>) -> Option<Traced<'src, Token<'src>>> {
         let (i, ch) = match self
             .iter
             .next()
@@ -360,7 +365,10 @@ impl<'src> TokenStream<'src> {
 
     /// Parse a string literal, start from the character after quote sign
     /// Errors handled internally
-    fn parse_string(&mut self, start_index: usize) -> Option<Traced<'src, Token<'src>>> {
+    fn parse_string(
+        &mut self,
+        start_index: SourceIndex<'src>,
+    ) -> Option<Traced<'src, Token<'src>>> {
         let mut parsed_string = String::new();
         let mut end_index = start_index;
         if self.iter.peek().is_none() {
@@ -409,11 +417,11 @@ impl<'src> Iterator for TokenStream<'src> {
                 }};
                 ($content: tt, $i: expr, 1) => {{
                     self.iter.next();
-                    Some(Token::$content.wrap_loc((self.path, $i, $i + 1)))
+                    Some(Token::$content.wrap_loc((self.path, $i.position, $i.position + 1)))
                 }};
                 ($content: tt, $i: expr, 2) => {{
                     self.iter.next();
-                    Some(Token::$content.wrap_loc((self.path, $i, $i + 2)))
+                    Some(Token::$content.wrap_loc((self.path, $i.position, $i.position + 2)))
                 }};
             }
             let x = self.iter.next();
