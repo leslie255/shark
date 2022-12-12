@@ -34,6 +34,8 @@ pub enum ErrorContent<'src> {
     // --- AST Parsing stage
     UnexpectedToken,
     UnexpectedEOF,
+    ExpectsSemicolon,
+    ExpectsSemicolonFoundEOF,
 
     #[allow(dead_code)]
     VarNotExist(&'src str),
@@ -62,6 +64,8 @@ impl<'src> ErrorContent<'src> {
             Self::InvalidCharacter(_) => "invalid character",
             Self::UnexpectedToken => "unexpected token",
             Self::UnexpectedEOF => "unexpected EOF",
+            Self::ExpectsSemicolon => "expects semicolon",
+            Self::ExpectsSemicolonFoundEOF => "expects semicolon but found EOF",
             Self::VarNotExist(_) => "variable does not exist",
         }
     }
@@ -95,7 +99,9 @@ impl<'src> ErrorContent<'src> {
                 print!("Invalid character `{}`", c.escape_default())
             }
             Self::UnexpectedToken => print!("Unexpected token"),
-            Self::UnexpectedEOF => print!("unexpected EOF"),
+            Self::UnexpectedEOF => print!("Unexpected EOF"),
+            Self::ExpectsSemicolon => print!("Expects semicolon"),
+            Self::ExpectsSemicolonFoundEOF => print!("Expects semicolon, but found EOF"),
             Self::VarNotExist(s) => {
                 print!("Variable `{}` not found in the current scope", s)
             }
