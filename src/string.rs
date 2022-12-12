@@ -1,3 +1,4 @@
+#![allow(dead_code)]
 use std::{
     fmt::{Debug, Display},
     ops::Range,
@@ -22,7 +23,7 @@ use std::{
 /// ```
 #[derive(Clone, PartialEq, Eq)]
 pub struct SourceString {
-    raw_string: String,
+    raw: String,
 }
 
 impl SourceString {
@@ -62,12 +63,21 @@ impl SourceString {
     /// assert_eq!(string.get(index), 'П');
     /// ```
     #[inline]
-    pub fn get<'a>(&'a self, index: SourceIndex<'a>) -> Option<char> {
+    pub fn get<'a>(&'a self, index: SourceIndex<'a>) -> char {
         let bytes = self.as_bytes();
         let bytes = &bytes[index.raw_index..bytes.len() - 1];
         unsafe {
-            let (_, char) = next_code_point_indexed(&mut bytes.iter())?;
-            Some(char::from_u32_unchecked(char))
+            let (_, char) = next_code_point_indexed(&mut bytes.iter())
+                .expect("Invalid encoding when indexing a `SourceString`");
+            if cfg!(debug) {
+                let char = char::from_u32(char);
+                match char {
+                    Some(c) => c,
+                    None => panic!("Invalid character when indexing a `SourceString`"),
+                }
+            } else {
+                char::from_u32_unchecked(char)
+            }
         }
     }
 
@@ -113,39 +123,37 @@ impl SourceString {
 
 impl From<&'_ str> for SourceString {
     fn from(s: &'_ str) -> Self {
-        Self {
-            raw_string: s.to_string(),
-        }
+        Self { raw: s.to_string() }
     }
 }
 
 impl From<String> for SourceString {
     fn from(s: String) -> Self {
-        Self { raw_string: s }
+        Self { raw: s }
     }
 }
 
 impl Debug for SourceString {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        Debug::fmt(&self.raw_string, f)
+        Debug::fmt(&self.raw, f)
     }
 }
 
 impl Display for SourceString {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        Display::fmt(&self.raw_string, f)
+        Display::fmt(&self.raw, f)
     }
 }
 
 impl SourceString {
     #[must_use]
     pub fn as_str<'a>(&'a self) -> &'a str {
-        self.raw_string.as_str()
+        self.raw.as_str()
     }
 
     #[must_use]
     pub fn as_bytes<'a>(&'a self) -> &'a [u8] {
-        self.raw_string.as_bytes()
+        self.raw.as_bytes()
     }
 }
 

@@ -28,10 +28,10 @@ fn test_string() {
     let mut iter = string.char_indices();
     
     let (index, char) = iter.next().unwrap();
-    assert_eq!(string.get(index), Some('你'));
+    assert_eq!(string.get(index), '你');
     assert_eq!(char, '你');
     
     let (index, char) = iter.next().unwrap();
-    assert_eq!(string.get(index), Some('好'));
+    assert_eq!(string.get(index), '好');
     assert_eq!(char, '好');
 }
