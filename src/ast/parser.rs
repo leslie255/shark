@@ -52,14 +52,6 @@ macro_rules! skip_to_expr_end {
         while let Some(token) = $token_stream.peek() {
             {
                 let token = token.inner();
-                if token == &Token::Eq
-                    || token == &Token::Semicolon
-                    || token == &Token::RoundParenClose
-                    || token == &Token::RectParenClose
-                    || token == &Token::BraceClose
-                {
-                    break;
-                }
                 match token {
                     &Token::Eq
                     | &Token::Semicolon

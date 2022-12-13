@@ -1,5 +1,3 @@
-#![allow(dead_code)]
-
 pub mod parser;
 pub mod type_expr;
 
@@ -41,6 +39,7 @@ impl<'src> Ast<'src> {
 }
 
 /// A node inside an AST
+#[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub enum AstNode<'a> {
     // --- Simple things

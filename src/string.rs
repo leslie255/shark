@@ -17,7 +17,6 @@ use std::{
 /// let index0 = string.char_indices().skip(8).next().unwrap().0;
 /// let index1 = string.char_indices().skip(13).next().unwrap().0;
 ///
-/// assert_eq!(string.get(index0), 'П');
 /// assert_eq!(string.slice(index0..index1), "Привет");
 /// ```
 #[derive(Clone, PartialEq, Eq)]
@@ -34,50 +33,20 @@ impl SourceString {
     /// let string = SourceString::from("你好，世界\n🌮\nПривет, мир\n");
     /// let mut iter = string.char_indices();
     ///
-    /// let (index, char) = iter.next().unwrap();
-    /// assert_eq!(string.get(index), Some('你'));
+    /// let (index0, char) = iter.next().unwrap();
     /// assert_eq!(char, '你');
     ///
-    /// let (index, char) = iter.next().unwrap();
-    /// assert_eq!(string.get(index), Some('好'));
+    /// let (index1, char) = iter.next().unwrap();
     /// assert_eq!(char, '好');
+    ///
+    /// let nihao = string.slice(index0..index1);
+    /// assert_eq!(nihao, "你好");
     /// ```
     pub fn char_indices<'a>(&'a self) -> SourceCharIndices<'a> {
         SourceCharIndices {
             iter: self.as_bytes().iter(),
             i: 0,
             raw_index: 0,
-        }
-    }
-
-    /// Returns the character on the index
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// let string = SourceString::from("你好，世界\n🌮\nПривет, мир\n");
-    ///
-    /// let index = string.char_indices().skip(8).next().unwrap().0;
-    ///
-    /// assert_eq!(string.get(index), 'П');
-    /// ```
-    #[allow(dead_code)]
-    #[inline]
-    pub fn get<'a>(&'a self, index: SourceIndex<'a>) -> char {
-        let bytes = self.as_bytes();
-        let bytes = &bytes[index.raw_index..bytes.len() - 1];
-        unsafe {
-            let (_, char) = next_code_point_indexed(&mut bytes.iter())
-                .expect("Invalid encoding when indexing a `SourceString`");
-            if cfg!(debug) {
-                let char = char::from_u32(char);
-                match char {
-                    Some(c) => c,
-                    None => panic!("Invalid character when indexing a `SourceString`"),
-                }
-            } else {
-                char::from_u32_unchecked(char)
-            }
         }
     }
 
@@ -98,7 +67,7 @@ impl SourceString {
     pub fn slice<'a>(&'a self, index: Range<SourceIndex<'a>>) -> &'a str {
         let bytes = self
             .as_bytes()
-            .get(index.start.raw_index..index.end.raw_index + index.end.len);
+            .get(index.start.raw..index.end.raw + index.end.len);
         let bytes = match bytes {
             Some(bytes) => bytes,
             None => {
@@ -106,18 +75,7 @@ impl SourceString {
                 panic!();
             }
         };
-        if cfg!(debug) {
-            let str = std::str::from_utf8(bytes);
-            match str {
-                Ok(str) => str,
-                Err(e) => {
-                    println!("Decode error when slicing `SourceString`:\n{:?}", e);
-                    panic!();
-                }
-            }
-        } else {
-            unsafe { std::str::from_utf8_unchecked(bytes) }
-        }
+        unsafe { std::str::from_utf8_unchecked(bytes) }
     }
 }
 
@@ -147,11 +105,13 @@ impl Display for SourceString {
 
 impl SourceString {
     #[must_use]
+    #[inline]
     pub fn as_str<'a>(&'a self) -> &'a str {
         self.raw.as_str()
     }
 
     #[must_use]
+    #[inline]
     pub fn as_bytes<'a>(&'a self) -> &'a [u8] {
         self.raw.as_bytes()
     }
@@ -161,13 +121,21 @@ impl SourceString {
 /// **INDEXED PRODUCED FROM ONE SOURCE STRING CAN NEVER BE USED ON ANOTHER SOURCE STRING**
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub struct SourceIndex<'a> {
-    raw_index: usize,
+    raw: usize,
     /// length of the character (in bytes)
     len: usize,
     /// The index of the character in the string
     pub position: usize,
     /// `SourceIndex` can't live outside of the `S
     lifetime_lock: &'a (),
+}
+
+impl SourceIndex<'_> {
+    #[allow(dead_code)]
+    #[inline]
+    pub unsafe fn raw_index(self) -> usize {
+        self.raw
+    }
 }
 
 const CONT_MASK: u8 = 0b0011_1111;
@@ -177,12 +145,13 @@ const fn utf8_first_byte(byte: u8, width: u32) -> u32 {
     (byte & (0x7F >> width)) as u32
 }
 
+/// Returns the value of `ch` updated with continuation byte `byte`.
 #[inline]
 const fn utf8_acc_cont_byte(ch: u32, byte: u8) -> u32 {
     (ch << 6) | (byte & CONT_MASK) as u32
 }
 
-/// Modified from `std::str::next_code_point`
+/// Modified from `core::str::next_code_point`
 /// Returns the length of the character, and the next code point in UTF-8
 unsafe fn next_code_point_indexed<'a, I: Iterator<Item = &'a u8>>(
     bytes: &mut I,
@@ -246,7 +215,7 @@ impl<'a> Iterator for SourceCharIndices<'a> {
 
             Some((
                 SourceIndex {
-                    raw_index,
+                    raw: raw_index,
                     len,
                     position,
                     lifetime_lock: &(),
