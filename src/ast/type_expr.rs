@@ -1,9 +1,9 @@
-use std::fmt::{Debug, Formatter, Display};
+use std::fmt::{Debug, Display, Formatter};
 
 #[derive(Clone)]
 pub struct TypeExpr<'a> {
-    pool: Vec<TypeExprNode<'a>>,
-    root: usize,
+    pub pool: Vec<TypeExprNode<'a>>,
+    pub root: usize,
 }
 impl<'a> TypeExpr<'a> {
     fn root(&self) -> TypeExprNode {
@@ -31,44 +31,57 @@ pub enum TypeExprNode<'a> {
     Char32,
     Char8,
 
+    None,
+
     Ptr(usize),
     Ref(usize),
     Slice(usize),
 
     TypeName(&'a str),
 }
-impl TypeExprNode<'_> {
+impl<'a> TypeExprNode<'a> {
     fn fmt(self, pool: &Vec<TypeExprNode<'_>>, f: &mut Formatter<'_>) -> std::fmt::Result {
         match self {
-            TypeExprNode::USize => write!(f, "usize")?,
-            TypeExprNode::ISize => write!(f, "isize")?,
-            TypeExprNode::U64 => write!(f, "u64")?,
-            TypeExprNode::U32 => write!(f, "u32")?,
-            TypeExprNode::U16 => write!(f, "u16")?,
-            TypeExprNode::U8 => write!(f, "u8")?,
-            TypeExprNode::I64 => write!(f, "i64")?,
-            TypeExprNode::I32 => write!(f, "i32")?,
-            TypeExprNode::I16 => write!(f, "i16")?,
-            TypeExprNode::I8 => write!(f, "i8")?,
-            TypeExprNode::Char32 => write!(f, "char32")?,
-            TypeExprNode::Char8 => write!(f, "char8")?,
-            TypeExprNode::Ptr(child_i) => {
+            Self::USize => write!(f, "usize")?,
+            Self::ISize => write!(f, "isize")?,
+            Self::U64 => write!(f, "u64")?,
+            Self::U32 => write!(f, "u32")?,
+            Self::U16 => write!(f, "u16")?,
+            Self::U8 => write!(f, "u8")?,
+            Self::I64 => write!(f, "i64")?,
+            Self::I32 => write!(f, "i32")?,
+            Self::I16 => write!(f, "i16")?,
+            Self::I8 => write!(f, "i8")?,
+            Self::Char32 => write!(f, "char32")?,
+            Self::Char8 => write!(f, "char8")?,
+            Self::None => write!(f, "none")?,
+            Self::Ptr(child_i) => {
                 write!(f, "ptr<")?;
                 pool[child_i].fmt(pool, f)?;
                 write!(f, ">")?;
             }
-            TypeExprNode::Ref(child_i) => {
+            Self::Ref(child_i) => {
                 write!(f, "ref<")?;
                 pool[child_i].fmt(pool, f)?;
                 write!(f, ">")?;
             }
-            TypeExprNode::Slice(child_i) => {
+            Self::Slice(child_i) => {
                 write!(f, "slice<")?;
                 pool[child_i].fmt(pool, f)?;
                 write!(f, ">")?;
             }
-            TypeExprNode::TypeName(name) => Display::fmt(&name.escape_default(), f)?,
+            Self::TypeName(name) => Display::fmt(&name.escape_default(), f)?,
         }
         Ok(())
+    }
+
+    /// Wrap the `TypeExprNode` into a `TypeExpr` with only one node
+    #[inline]
+    #[must_use]
+    pub fn wrap(self) -> TypeExpr<'a> {
+        TypeExpr {
+            pool: vec![self],
+            root: 0,
+        }
     }
 }

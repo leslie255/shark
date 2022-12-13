@@ -92,6 +92,7 @@ pub enum Token<'a> {
     Colon,           // :
     Semicolon,       // ;
     Dot,             // .
+    Comma,           // ,
 
     // 2-levels ambiguous
     // (Tokenizer has to peek 1 character forward)
@@ -133,8 +134,15 @@ pub enum Token<'a> {
     LeLeEq, // <<=
     GrGrEq, // >>=
 }
-impl<'a> Token<'a> {
-    pub fn wrap_loc(self, loc: impl IntoSourceLoc<'a>) -> Traced<'a, Self> {
+impl<'src> Token<'src> {
+    /// Wrap the token into `Traced<Token>`
+    pub fn wrap_loc(self, loc: impl IntoSourceLoc<'src>) -> Traced<'src, Self> {
         Traced::new(self, loc.into_source_location())
+    }
+    pub fn expect_identifier(&self) -> Option<&'src str> {
+        match self {
+            Token::Identifier(s) => Some(s),
+            _ => None,
+        }
     }
 }

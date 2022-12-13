@@ -2,6 +2,7 @@ pub mod location;
 
 use std::cell::RefCell;
 
+use colored::Colorize;
 use location::{IntoSourceLoc, SourceLocation};
 
 use crate::buffered_content::BufferedContent;
@@ -36,6 +37,9 @@ pub enum ErrorContent<'src> {
     UnexpectedEOF,
     ExpectsSemicolon,
     ExpectsSemicolonFoundEOF,
+    ExpectIDAfterLet,
+    InvalidTypeExpr,
+    SliceNoClosingParen,
 
     #[allow(dead_code)]
     VarNotExist(&'src str),
@@ -66,44 +70,46 @@ impl<'src> ErrorContent<'src> {
             Self::UnexpectedEOF => "unexpected EOF",
             Self::ExpectsSemicolon => "expects semicolon",
             Self::ExpectsSemicolonFoundEOF => "expects semicolon but found EOF",
+            Self::ExpectIDAfterLet => "expects an identifier after `let`",
+            Self::InvalidTypeExpr => "invalid type expression",
+            Self::SliceNoClosingParen => "missing closing rect paren in slice type",
             Self::VarNotExist(_) => "variable does not exist",
         }
     }
-    fn print_description(&self) {
+    fn description(&self) -> String {
         match self {
             Self::EofInStringOrChar(str_or_char) => match str_or_char {
-                StrOrChar::Str => print!("Unexpected EOF in string literal"),
-                StrOrChar::Char => print!("Unexpected EOF in character literal"),
+                StrOrChar::Str => "Unexpected EOF in string literal".to_string(),
+                StrOrChar::Char => "Unexpected EOF in character literal".to_string(),
             },
-            Self::UnicodeEscOverflow => {
-                print!("Unicode escape must have at most 6 hex digits")
-            }
+            Self::UnicodeEscOverflow => "Unicode escape must have at most 6 hex digits".to_string(),
             Self::UnicodeEscNonHexDigit => {
-                print!("Unicode escape must contain only hex digits")
+                "Unicode escape must contain only hex digits".to_string()
             }
             Self::UnicodeEscNoOpeningBrace => {
-                print!("Expects a `{{` after `\\u` for unicod escape")
+                "Expects a `{{` after `\\u` for unicod escape".to_string()
             }
-            Self::UnicodeEscNoClosingBrace => print!("No `}}` in unicode escape"),
-            Self::NumericEscNonHexDigit => {
-                print!("Numeric escape can only have hex digits")
-            }
+            Self::UnicodeEscNoClosingBrace => "No `}}` in unicode escape".to_string(),
+            Self::NumericEscNonHexDigit => "Numeric escape can only have hex digits".to_string(),
             Self::InvalidCharEsc(c) => {
-                print!("Unknown character escape `{}`", c.escape_default())
+                format!("Unknown character escape `{}`", c.escape_default())
             }
-            Self::CharNoEndQuote => print!("missing terminating quote for character literal"),
+            Self::CharNoEndQuote => "missing terminating quote for character literal".to_string(),
             Self::InvalidIntSuffix(c) => {
-                print!("Unkown suffix for number literal `0{}`", c)
+                format!("Unkown suffix for number literal `0{}`", c)
             }
             Self::InvalidCharacter(c) => {
-                print!("Invalid character `{}`", c.escape_default())
+                format!("Invalid character `{}`", c.escape_default())
             }
-            Self::UnexpectedToken => print!("Unexpected token"),
-            Self::UnexpectedEOF => print!("Unexpected EOF"),
-            Self::ExpectsSemicolon => print!("Expects semicolon"),
-            Self::ExpectsSemicolonFoundEOF => print!("Expects semicolon, but found EOF"),
+            Self::UnexpectedToken => "Unexpected token".to_string(),
+            Self::UnexpectedEOF => "Unexpected EOF".to_string(),
+            Self::ExpectsSemicolon => "Expects semicolon".to_string(),
+            Self::ExpectsSemicolonFoundEOF => "Expects semicolon, but found EOF".to_string(),
+            Self::ExpectIDAfterLet => "Expects an identifier after `let`".to_string(),
+            Self::InvalidTypeExpr => "Invalid type expression".to_string(),
+            Self::SliceNoClosingParen => "Missing a `]`".to_string(),
             Self::VarNotExist(s) => {
-                print!("Variable `{}` not found in the current scope", s)
+                format!("Variable `{}` not found in the current scope", s)
             }
         }
     }
@@ -185,11 +191,16 @@ fn print_err(
 ) {
     // TODO: only show a slice of the line if the line is too long
     print!(
-        "--> {}:{}:{}\n    {}\n\n",
-        err.location.file_name.escape_default(),
-        line_num + 1,
-        col_num + 1,
-        err.content.name()
+        "{} {}\n    {}\n\n",
+        "-->".blue().bold(),
+        format!(
+            "{}:{}:{}",
+            err.location.file_name.escape_default(),
+            line_num + 1,
+            col_num + 1,
+        )
+        .bold(),
+        err.content.name(),
     );
     let line_text = &file_content[line_start..line_end];
     println!("{}", line_text);
@@ -201,15 +212,13 @@ fn print_err(
         }
     }
     if len == 0 {
-        print!("^")
+        print!("{}", "^".red().bold())
     } else {
         for _ in 0..=len {
-            print!("~")
+            print!("{}", "~".red().bold())
         }
     }
-    println!();
-    err.content.print_description();
-    print!("\n\n");
+    println!(" {}", err.content.description().red().bold());
 }
 
 pub trait CollectIfErr<'src> {

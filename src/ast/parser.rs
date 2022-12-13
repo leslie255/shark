@@ -3,11 +3,17 @@ use std::iter::Peekable;
 use crate::{
     ast::BitOpKind,
     buffered_content::BufferedContent,
-    error::{location::Traced, CollectIfErr, ErrorCollector, ErrorContent},
+    error::{
+        location::{SourceLocation, Traced},
+        CollectIfErr, ErrorCollector, ErrorContent,
+    },
     token::{tokenizer::TokenStream, Token},
 };
 
-use super::{Ast, AstNode, AstNodeRef, MathOpKind};
+use super::{
+    type_expr::{TypeExpr, TypeExprNode},
+    Ast, AstNode, AstNodeRef, MathOpKind,
+};
 
 /// Owns a `TokenStream` and parses it into AST incrementally
 /// Implements `Iterator`
@@ -17,6 +23,57 @@ pub struct AstParser<'src> {
     err_collector: &'src ErrorCollector<'src>,
     token_stream: Peekable<TokenStream<'src>>,
     ast: Ast<'src>,
+}
+/// Increment one token forward, if it's EOF than create an UnexpectedEOF error and collect it into
+/// an `ErrorCollector`
+macro_rules! next_token {
+    ($self: expr, $loc: expr) => {
+        $self
+            .token_stream
+            .next()
+            .ok_or(ErrorContent::UnexpectedEOF.wrap($loc))
+            .collect_err($self.err_collector)?
+    };
+}
+/// Peek one token forward, if it's EOF than create an UnexpectedEOF error and collect it into an
+/// `ErrorCollector`
+macro_rules! peek_token {
+    ($self: expr, $loc: expr) => {
+        $self
+            .token_stream
+            .peek()
+            .ok_or(ErrorContent::UnexpectedEOF.wrap($loc))
+            .collect_err($self.err_collector)?
+    };
+}
+/// When encountering an error, skip to the (presumed) end of the expression
+macro_rules! skip_to_expr_end {
+    ($token_stream: expr) => {
+        while let Some(token) = $token_stream.peek() {
+            {
+                let token = token.inner();
+                if token == &Token::Eq
+                    || token == &Token::Semicolon
+                    || token == &Token::RoundParenClose
+                    || token == &Token::RectParenClose
+                    || token == &Token::BraceClose
+                {
+                    break;
+                }
+                match token {
+                    &Token::Eq
+                    | &Token::Semicolon
+                    | &Token::RoundParenClose
+                    | &Token::RectParenClose
+                    | &Token::BraceClose
+                    | &Token::Comma => break,
+                    _ => {
+                        $token_stream.next();
+                    }
+                }
+            }
+        }
+    };
 }
 impl<'src> AstParser<'src> {
     pub fn new(
@@ -50,6 +107,10 @@ impl<'src> AstParser<'src> {
                 Token::String(str) => {
                     let str_id = self.ast.add_str(str);
                     node = AstNode::String(str_id).wrap_loc(token_location)
+                }
+                Token::Let => node = self.parse_let(token_location)?,
+                Token::Fn => {
+                    todo!()
                 }
                 _ => {
                     ErrorContent::UnexpectedToken
@@ -215,7 +276,136 @@ impl<'src> AstParser<'src> {
             }
             (None, false) => (),
         }
-        return Some(node);
+        Some(node)
+    }
+
+    /// Parse a `let` expression, starting from the token `let`
+    /// EOF error handled inside
+    /// Takes in the location of the token `let` as argument
+    #[must_use]
+    fn parse_let(
+        &mut self,
+        start_loc: SourceLocation<'src>,
+    ) -> Option<Traced<'src, AstNode<'src>>> {
+        // Get variable name
+        let next_token = next_token!(self, start_loc);
+        let token_location = next_token.src_loc();
+        let var_name = next_token
+            .expect_identifier()
+            .ok_or(ErrorContent::ExpectIDAfterLet.wrap(token_location))
+            .collect_err(self.err_collector)?;
+
+        // Get type
+        let mut peeked_token = peek_token!(self, token_location);
+        let mut peeked_location = peeked_token.src_loc();
+        let var_type = match peeked_token.inner() {
+            Token::Colon => {
+                self.token_stream.next();
+                let type_expr = self.parse_type_expr(0, peeked_location, |token_stream| {
+                    skip_to_expr_end!(token_stream)
+                })?;
+                peeked_token = peek_token!(self, peeked_location);
+                peeked_location = peeked_token.src_loc();
+                Some(type_expr)
+            }
+            _ => Option::<TypeExpr<'src>>::None,
+        };
+
+        // Get rhs
+        let rhs = match peeked_token.inner() {
+            Token::Eq => {
+                self.token_stream.next();
+                let rhs = self
+                    .parse_expr(15, false)
+                    .ok_or(ErrorContent::UnexpectedEOF.wrap(peeked_location))
+                    .collect_err(self.err_collector)?;
+                Some(rhs)
+            }
+            _ => None,
+        };
+        let end_loc = match &rhs {
+            Some(n) => n.src_loc().range.1,
+            None => peeked_location.range.1,
+        };
+
+        let start_loc = start_loc.range.0;
+        let rhs = rhs.map(|n| self.ast.add_node(n));
+        Some(AstNode::Let(var_name, var_type, rhs).wrap_loc((self.path, start_loc, end_loc)))
+    }
+
+    /// Parse a type expression, starting from the token before that expression
+    /// Returns None if unexpected EOF, errors handled internally
+    #[must_use]
+    fn parse_type_expr<F>(
+        &mut self,
+        recursive_counter: usize,
+        current_loc: SourceLocation<'src>,
+        err_handler: F,
+    ) -> Option<TypeExpr<'src>>
+    where
+        F: Fn(&mut Peekable<TokenStream<'src>>),
+    {
+        let next_token = next_token!(self, current_loc);
+        let token_location = next_token.src_loc();
+        match next_token.into_inner() {
+            Token::Identifier("usize") => Some(TypeExprNode::USize.wrap()),
+            Token::Identifier("isize") => Some(TypeExprNode::ISize.wrap()),
+            Token::Identifier("u64") => Some(TypeExprNode::U64.wrap()),
+            Token::Identifier("u32") => Some(TypeExprNode::U32.wrap()),
+            Token::Identifier("u16") => Some(TypeExprNode::U16.wrap()),
+            Token::Identifier("u8") => Some(TypeExprNode::U8.wrap()),
+            Token::Identifier("i64") => Some(TypeExprNode::I64.wrap()),
+            Token::Identifier("i32") => Some(TypeExprNode::I32.wrap()),
+            Token::Identifier("i16") => Some(TypeExprNode::I16.wrap()),
+            Token::Identifier("i8") => Some(TypeExprNode::I8.wrap()),
+            Token::Identifier("char32") => Some(TypeExprNode::Char32.wrap()),
+            Token::Identifier("char8") => Some(TypeExprNode::Char8.wrap()),
+            Token::Identifier("none") => Some(TypeExprNode::None.wrap()),
+            Token::AndOp => {
+                let mut node =
+                    self.parse_type_expr(recursive_counter + 1, current_loc, err_handler)?;
+                node.pool.push(TypeExprNode::Ref(node.root));
+                node.root = node.pool.len() - 1;
+                Some(node)
+            }
+            Token::Mul => {
+                let mut node =
+                    self.parse_type_expr(recursive_counter + 1, current_loc, err_handler)?;
+                node.pool.push(TypeExprNode::Ptr(node.root));
+                node.root = node.pool.len() - 1;
+                Some(node)
+            }
+            Token::RectParenOpen => {
+                let peeked_token = self
+                    .token_stream
+                    .peek()
+                    .ok_or(ErrorContent::UnexpectedEOF.wrap(token_location))
+                    .collect_err(self.err_collector)?;
+                let peeked_location = peeked_token.src_loc();
+                match peeked_token.inner() {
+                    Token::RectParenClose => {
+                        self.token_stream.next();
+                    }
+                    _ => {
+                        ErrorContent::SliceNoClosingParen
+                            .wrap((self.path, peeked_location.range.0));
+                        err_handler(&mut self.token_stream);
+                        return None;
+                    }
+                }
+                let mut node = self.parse_type_expr(recursive_counter+1, current_loc, err_handler)?;
+                node.pool.push(TypeExprNode::Slice(node.root));
+                node.root = node.pool.len()-1;
+                Some(node)
+            }
+            _ => {
+                ErrorContent::InvalidTypeExpr
+                    .wrap(token_location)
+                    .collect_into(self.err_collector);
+                err_handler(&mut self.token_stream);
+                None
+            }
+        }
     }
 }
 impl<'src> Iterator for AstParser<'src> {

@@ -449,6 +449,7 @@ impl<'src> Iterator for TokenStream<'src> {
                 (i, ':') => token!(Colon, i),
                 (i, ';') => token!(Semicolon, i),
                 (i, '.') => token!(Dot, i),
+                (i, ',') => token!(Comma, i),
 
                 (i, '+') => match peek!() {
                     case!('=') => token!(AddEq, i, 1),
