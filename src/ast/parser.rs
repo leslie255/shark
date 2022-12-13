@@ -361,6 +361,7 @@ impl<'src> AstParser<'src> {
             Token::Identifier("char32") => Some(TypeExprNode::Char32.wrap()),
             Token::Identifier("char8") => Some(TypeExprNode::Char8.wrap()),
             Token::Identifier("none") => Some(TypeExprNode::None.wrap()),
+            Token::Identifier(typename) => Some(TypeExprNode::TypeName(typename).wrap()),
             Token::AndOp => {
                 let mut node =
                     self.parse_type_expr(recursive_counter + 1, current_loc, err_handler)?;

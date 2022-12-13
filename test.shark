@@ -1,9 +1,1 @@
-// pointer  (just like pointers in C)
-let ptr: *i32;
-
-// reference (pointers but you can't subscript or do arithmatic operations on it)
-let ref: &i32;
-
-// slice (pointers with a `usize` for length information, can be subscripted)
-let slice: [i32;
-
+let x: T = 1+1;
