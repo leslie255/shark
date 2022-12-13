@@ -40,11 +40,13 @@ pub enum ErrorContent<'src> {
     ExpectIDAfterLet,
     InvalidTypeExpr,
     SliceNoClosingParen,
+    LetNoTypeOrRHS,
 
     #[allow(dead_code)]
     VarNotExist(&'src str),
 }
 impl<'src> ErrorContent<'src> {
+    #[must_use]
     pub fn wrap(self, loc: impl IntoSourceLoc<'src>) -> Error<'src> {
         Error {
             location: loc.into_source_location(),
@@ -73,6 +75,7 @@ impl<'src> ErrorContent<'src> {
             Self::ExpectIDAfterLet => "expects an identifier after `let`",
             Self::InvalidTypeExpr => "invalid type expression",
             Self::SliceNoClosingParen => "missing closing rect paren in slice type",
+            Self::LetNoTypeOrRHS => "missing type annotation for let expression",
             Self::VarNotExist(_) => "variable does not exist",
         }
     }
@@ -108,6 +111,9 @@ impl<'src> ErrorContent<'src> {
             Self::ExpectIDAfterLet => "Expects an identifier after `let`".to_string(),
             Self::InvalidTypeExpr => "Invalid type expression".to_string(),
             Self::SliceNoClosingParen => "Missing a `]`".to_string(),
+            Self::LetNoTypeOrRHS => {
+                "`let` expressions needs to have a type annotation or RHS (or both)".to_string()
+            }
             Self::VarNotExist(s) => {
                 format!("Variable `{}` not found in the current scope", s)
             }
@@ -204,7 +210,7 @@ fn print_err(
     );
     let line_text = &file_content[line_start..line_end];
     println!("{}", line_text);
-    for c in line_text[0..col_num].chars() {
+    for c in line_text[0..col_num - 1].chars() {
         if c == '\t' {
             print!("   ");
         } else {

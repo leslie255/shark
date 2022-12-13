@@ -330,7 +330,15 @@ impl<'src> AstParser<'src> {
 
         let start_loc = start_loc.range.0;
         let rhs = rhs.map(|n| self.ast.add_node(n));
-        Some(AstNode::Let(var_name, var_type, rhs).wrap_loc((self.path, start_loc, end_loc)))
+        let node_loc = (self.path, start_loc, end_loc);
+
+        match (&var_type, &rhs) {
+            (None, None) => ErrorContent::LetNoTypeOrRHS
+                .wrap(node_loc)
+                .collect_into(self.err_collector),
+            _ => (),
+        }
+        Some(AstNode::Let(var_name, var_type, rhs).wrap_loc(node_loc))
     }
 
     /// Parse a type expression, starting from the token before that expression
