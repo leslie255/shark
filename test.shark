@@ -1,3 +1,7 @@
 printf("hello, world\n");
 printf("x = %d\n", x,);
-test_func();
+{
+    test_func();
+    test_func(lol());
+};
+

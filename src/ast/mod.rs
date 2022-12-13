@@ -74,6 +74,7 @@ pub enum AstNode<'src> {
     Deref(AstNodeRef<'src>),
 
     // -- Control flow
+    Block(Vec<AstNodeRef<'src>>),
     FnDef(FnDef<'src>),
     If(IfExpr<'src>),
     Loop(Vec<AstNodeRef<'src>>),

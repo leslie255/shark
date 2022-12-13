@@ -4,7 +4,7 @@ use crate::{
     ast::BitOpKind,
     buffered_content::BufferedContent,
     error::{
-        location::{SourceLocation, Traced},
+        location::{IntoSourceLoc, SourceLocation, Traced},
         CollectIfErr, ErrorCollector, ErrorContent,
     },
     token::{tokenizer::TokenStream, Token},
@@ -24,6 +24,16 @@ pub struct AstParser<'src> {
     token_stream: Peekable<TokenStream<'src>>,
     ast: Ast<'src>,
 }
+
+impl<'src> Iterator for AstParser<'src> {
+    type Item = AstNodeRef<'src>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let node = self.parse_expr(15, true)?;
+        Some(self.ast.add_node(node))
+    }
+}
+
 /// Increment one token forward, if it's EOF than create an UnexpectedEOF error and collect it into
 /// an `ErrorCollector`
 macro_rules! next_token {
@@ -35,6 +45,7 @@ macro_rules! next_token {
             .collect_err($self.err_collector)?
     };
 }
+
 /// Peek one token forward, if it's EOF than create an UnexpectedEOF error and collect it into an
 /// `ErrorCollector`
 macro_rules! peek_token {
@@ -46,6 +57,7 @@ macro_rules! peek_token {
             .collect_err($self.err_collector)?
     };
 }
+
 /// When encountering an error, skip to the (presumed) end of the expression
 macro_rules! skip_to_expr_end {
     ($token_stream: expr) => {
@@ -67,6 +79,7 @@ macro_rules! skip_to_expr_end {
         }
     };
 }
+
 impl<'src> AstParser<'src> {
     pub fn new(
         path: &'src str,
@@ -109,6 +122,11 @@ impl<'src> AstParser<'src> {
                 Token::Let => node = self.parse_let(token_location)?,
                 Token::Fn => {
                     todo!()
+                }
+                Token::BraceOpen => {
+                    let (loc, children) = self.parse_block(token_location)?;
+                    let block = AstNode::Block(children);
+                    node = block.traced(loc);
                 }
                 _ => {
                     ErrorContent::UnexpectedToken
@@ -289,6 +307,7 @@ impl<'src> AstParser<'src> {
     /// EOF error handled inside
     /// Takes in the location of the token `let` as argument
     #[must_use]
+    #[inline]
     fn parse_let(
         &mut self,
         start_loc: SourceLocation<'src>,
@@ -394,8 +413,40 @@ impl<'src> AstParser<'src> {
         Some((args, close_paren_loc))
     }
 
+    /// Parse a block, starting from the `{`
+    /// Returns the `SourceLocation` of the block, and the child nodes
+    /// Returns `None` if unexpected EOF, errors handled internally
+    #[must_use]
+    #[inline]
+    fn parse_block(
+        &mut self,
+        start_loc: SourceLocation<'src>,
+    ) -> Option<(SourceLocation<'src>, Vec<AstNodeRef<'src>>)> {
+        let mut nodes = Vec::<AstNodeRef<'src>>::new();
+        let mut end_loc: usize;
+        loop {
+            let node = self
+                .parse_expr(15, true)
+                .ok_or(ErrorContent::UnexpectedEOF.wrap(start_loc))
+                .collect_err(self.err_collector)?;
+            let node_ref = self.ast.add_node(node);
+            nodes.push(node_ref);
+            let peek = peek_token!(self, start_loc);
+            end_loc = peek.src_loc().range.1;
+            match peek.inner() {
+                Token::BraceClose => {
+                    self.token_stream.next();
+                    break;
+                }
+                _ => continue,
+            }
+        }
+        let loc = (start_loc.file_name, start_loc.range.0, end_loc).into_source_location();
+        Some((loc, nodes))
+    }
+
     /// Parse a type expression, starting from the token before that expression
-    /// Returns None if unexpected EOF, errors handled internally
+    /// Returns `None` if unexpected EOF, errors handled internally
     #[must_use]
     fn parse_type_expr<F>(
         &mut self,
@@ -470,13 +521,5 @@ impl<'src> AstParser<'src> {
                 None
             }
         }
-    }
-}
-impl<'src> Iterator for AstParser<'src> {
-    type Item = AstNodeRef<'src>;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        let node = self.parse_expr(15, true)?;
-        Some(self.ast.add_node(node))
     }
 }
