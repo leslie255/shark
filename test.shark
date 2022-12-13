@@ -5,5 +5,5 @@ let ptr: *i32;
 let ref: &i32;
 
 // slice (pointers with a `usize` for length information, can be subscripted)
-let slice: []i32;
+let slice: [i32;
 

@@ -388,14 +388,16 @@ impl<'src> AstParser<'src> {
                     }
                     _ => {
                         ErrorContent::SliceNoClosingParen
-                            .wrap((self.path, peeked_location.range.0));
+                            .wrap((self.path, peeked_location.range.0))
+                            .collect_into(self.err_collector);
                         err_handler(&mut self.token_stream);
-                        return None;
+                        return Some(TypeExprNode::None.wrap());
                     }
                 }
-                let mut node = self.parse_type_expr(recursive_counter+1, current_loc, err_handler)?;
+                let mut node =
+                    self.parse_type_expr(recursive_counter + 1, current_loc, err_handler)?;
                 node.pool.push(TypeExprNode::Slice(node.root));
-                node.root = node.pool.len()-1;
+                node.root = node.pool.len() - 1;
                 Some(node)
             }
             _ => {
