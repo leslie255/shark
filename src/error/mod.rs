@@ -41,6 +41,7 @@ pub enum ErrorContent<'src> {
     InvalidTypeExpr,
     SliceNoClosingParen,
     LetNoTypeOrRHS,
+    ExpectCommaOrRoundParenClose,
 
     #[allow(dead_code)]
     VarNotExist(&'src str),
@@ -76,6 +77,7 @@ impl<'src> ErrorContent<'src> {
             Self::InvalidTypeExpr => "invalid type expression",
             Self::SliceNoClosingParen => "missing closing rect paren in slice type",
             Self::LetNoTypeOrRHS => "missing type annotation for let expression",
+            Self::ExpectCommaOrRoundParenClose => "expects comma or round paren close",
             Self::VarNotExist(_) => "variable does not exist",
         }
     }
@@ -114,6 +116,7 @@ impl<'src> ErrorContent<'src> {
             Self::LetNoTypeOrRHS => {
                 "`let` expressions needs to have a type annotation or RHS (or both)".to_string()
             }
+            Self::ExpectCommaOrRoundParenClose => "Expects `,` or `)`".to_string(),
             Self::VarNotExist(s) => {
                 format!("Variable `{}` not found in the current scope", s)
             }

@@ -41,10 +41,10 @@ impl<'src> Ast<'src> {
 /// A node inside an AST
 #[allow(dead_code)]
 #[derive(Debug, Clone)]
-pub enum AstNode<'a> {
+pub enum AstNode<'src> {
     // --- Simple things
     /// Sliced from source
-    Identifier(&'a str),
+    Identifier(&'src str),
     Number(NumValue),
     /// By index in `Ast.str_pool`
     String(usize),
@@ -52,32 +52,34 @@ pub enum AstNode<'a> {
 
     // --- Operators
     /// add, sub, mul, div
-    MathOp(MathOpKind, AstNodeRef<'a>, AstNodeRef<'a>),
+    MathOp(MathOpKind, AstNodeRef<'src>, AstNodeRef<'src>),
     /// and, or, xor
     /// Not including not because not doesn't have an RHS
-    BitOp(BitOpKind, AstNodeRef<'a>, AstNodeRef<'a>),
+    BitOp(BitOpKind, AstNodeRef<'src>, AstNodeRef<'src>),
     /// Bitwise NOT (~)
-    BitNot(AstNodeRef<'a>),
+    BitNot(AstNodeRef<'src>),
+
+    Call(AstNodeRef<'src>, Vec<AstNodeRef<'src>>),
 
     // --- Assignments
-    Assign(AstNodeRef<'a>, AstNodeRef<'a>),
+    Assign(AstNodeRef<'src>, AstNodeRef<'src>),
     /// +=, -=, *=, /=, %=
-    MathOpAssign(MathOpKind, AstNodeRef<'a>, AstNodeRef<'a>),
+    MathOpAssign(MathOpKind, AstNodeRef<'src>, AstNodeRef<'src>),
     /// |=, &=, ^=
-    BitOpAssign(BitOpKind, AstNodeRef<'a>, AstNodeRef<'a>),
-    Let(&'a str, Option<TypeExpr<'a>>, Option<AstNodeRef<'a>>),
+    BitOpAssign(BitOpKind, AstNodeRef<'src>, AstNodeRef<'src>),
+    Let(&'src str, Option<TypeExpr<'src>>, Option<AstNodeRef<'src>>),
 
     // --- Reference operations
-    TakeRef(AstNodeRef<'a>),
-    Deref(AstNodeRef<'a>),
+    TakeRef(AstNodeRef<'src>),
+    Deref(AstNodeRef<'src>),
 
     // -- Control flow
-    FnDef(FnDef<'a>),
-    If(IfExpr<'a>),
-    Loop(Vec<AstNodeRef<'a>>),
+    FnDef(FnDef<'src>),
+    If(IfExpr<'src>),
+    Loop(Vec<AstNodeRef<'src>>),
 }
 impl<'src> AstNode<'src> {
-    pub fn wrap_loc(self, loc: impl IntoSourceLoc<'src>) -> Traced<'src, Self> {
+    pub fn traced(self, loc: impl IntoSourceLoc<'src>) -> Traced<'src, Self> {
         Traced::new(self, loc.into_source_location())
     }
 }
