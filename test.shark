@@ -1,5 +1,6 @@
-fn main() {
+fn main() -> i32 {
     let a = 250;
     let b = a + 5;
     printf("b = %d\n", b);
+    return 0;
 }

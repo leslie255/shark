@@ -126,6 +126,15 @@ impl<'src> AstParser<'src> {
                     let block = AstNode::Block(children);
                     node = block.traced(loc);
                 }
+                Token::Return => {
+                    let child = self
+                        .parse_expr(15, false)
+                        .ok_or(ErrorContent::UnexpectedEOF.wrap(token_location))
+                        .collect_err(self.err_collector)?;
+                    let loc = (token_location.file_name, token_location.range.0, child.src_loc().range.1);
+                    let child = self.ast.add_node(child);
+                    node = AstNode::Return(child).traced(loc);
+                }
                 _ => {
                     ErrorContent::UnexpectedToken
                         .wrap(token_location)
@@ -288,7 +297,7 @@ impl<'src> AstParser<'src> {
                 _ => {
                     let loc = node.src_loc().range.1;
                     ErrorContent::ExpectsSemicolon
-                        .wrap((self.path, loc))
+                        .wrap((node.src_loc().file_name, loc))
                         .collect_into(self.err_collector);
                 }
             },
@@ -298,7 +307,7 @@ impl<'src> AstParser<'src> {
                 _ => {
                     let loc = node.src_loc().range.1;
                     ErrorContent::ExpectsSemicolonFoundEOF
-                        .wrap((self.path, loc))
+                        .wrap((node.src_loc().file_name, loc))
                         .collect_into(self.err_collector);
                 }
             },

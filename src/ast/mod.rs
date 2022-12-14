@@ -78,6 +78,8 @@ pub enum AstNode<'src> {
     FnDef(FnDef<'src>),
     If(IfExpr<'src>),
     Loop(Vec<AstNodeRef<'src>>),
+
+    Return(AstNodeRef<'src>),
 }
 impl<'src> AstNode<'src> {
     pub fn traced(self, loc: impl IntoSourceLoc<'src>) -> Traced<'src, Self> {
