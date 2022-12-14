@@ -5,7 +5,7 @@ use std::cell::RefCell;
 use colored::Colorize;
 use location::{IntoSourceLoc, SourceLocation};
 
-use crate::buffered_content::BufferedContent;
+use crate::{buffered_content::BufferedContent, token::Token};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum StrOrChar {
@@ -37,11 +37,11 @@ pub enum ErrorContent<'src> {
     UnexpectedEOF,
     ExpectsSemicolon,
     ExpectsSemicolonFoundEOF,
-    ExpectIDAfterLet,
     InvalidTypeExpr,
     SliceNoClosingParen,
     LetNoTypeOrRHS,
-    ExpectCommaOrRoundParenClose,
+    ExpectToken(Token<'src>),
+    ExpectMultipleTokens(Vec<Token<'src>>),
 
     #[allow(dead_code)]
     VarNotExist(&'src str),
@@ -73,11 +73,11 @@ impl<'src> ErrorContent<'src> {
             Self::UnexpectedEOF => "unexpected EOF",
             Self::ExpectsSemicolon => "expects semicolon",
             Self::ExpectsSemicolonFoundEOF => "expects semicolon but found EOF",
-            Self::ExpectIDAfterLet => "expects an identifier after `let`",
             Self::InvalidTypeExpr => "invalid type expression",
             Self::SliceNoClosingParen => "missing closing rect paren in slice type",
             Self::LetNoTypeOrRHS => "missing type annotation for let expression",
-            Self::ExpectCommaOrRoundParenClose => "expects comma or round paren close",
+            Self::ExpectToken(_) => "expect token",
+            Self::ExpectMultipleTokens(_) => "expect tokens",
             Self::VarNotExist(_) => "variable does not exist",
         }
     }
@@ -110,13 +110,14 @@ impl<'src> ErrorContent<'src> {
             Self::UnexpectedEOF => "Unexpected EOF".to_string(),
             Self::ExpectsSemicolon => "Expects semicolon".to_string(),
             Self::ExpectsSemicolonFoundEOF => "Expects semicolon, but found EOF".to_string(),
-            Self::ExpectIDAfterLet => "Expects an identifier after `let`".to_string(),
             Self::InvalidTypeExpr => "Invalid type expression".to_string(),
             Self::SliceNoClosingParen => "Missing a `]`".to_string(),
             Self::LetNoTypeOrRHS => {
                 "`let` expressions needs to have a type annotation or RHS (or both)".to_string()
             }
-            Self::ExpectCommaOrRoundParenClose => "Expects `,` or `)`".to_string(),
+            Self::ExpectToken(t) => format!("Expect {:?}", t),
+            // TODO: pretty format this
+            Self::ExpectMultipleTokens(tokens) => format!("Expect tokens: {:?}", tokens),
             Self::VarNotExist(s) => {
                 format!("Variable `{}` not found in the current scope", s)
             }
@@ -213,7 +214,7 @@ fn print_err(
     );
     let line_text = &file_content[line_start..line_end];
     println!("{}", line_text);
-    for c in line_text[0..col_num - 1].chars() {
+    for c in line_text[0..col_num].chars() {
         if c == '\t' {
             print!("   ");
         } else {

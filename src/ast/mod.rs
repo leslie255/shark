@@ -106,12 +106,41 @@ impl<'a> Debug for AstNodeRef<'a> {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct FnDef<'a> {
     pub name: &'a str,
     pub args: Vec<(&'a str, TypeExpr<'a>)>,
     pub ret_type: TypeExpr<'a>,
     pub body: Option<Vec<AstNodeRef<'a>>>,
+}
+
+impl Debug for FnDef<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.name.escape_default())?;
+        let arg_count = self.args.len();
+        match arg_count {
+            0 => write!(f, "()")?,
+            1 => {
+                let (name, dtype) = unsafe { self.args.first().unwrap_unchecked() };
+                write!(f, "({}:{:?})", name, dtype)?;
+            }
+            _ => {
+                write!(f, "(")?;
+                for (name, dtype) in self.args[0..self.args.len() - 1].iter() {
+                    write!(f, "{}:{:?},", name.escape_default(), dtype)?;
+                }
+                let (name, dtype) = unsafe { self.args.last().unwrap_unchecked() };
+                write!(f, "{}:{:?}", name.escape_default(), dtype)?;
+                write!(f, ")")?;
+            }
+        }
+        write!(f, "->")?;
+        self.ret_type.fmt(f)?;
+        if let Some(body) = &self.body {
+            body.fmt(f)?;
+        }
+        Ok(())
+    }
 }
 
 #[derive(Debug, Clone)]

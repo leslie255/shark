@@ -56,19 +56,16 @@ impl<'a> TypeExprNode<'a> {
             Self::Char8 => write!(f, "char8")?,
             Self::None => write!(f, "none")?,
             Self::Ptr(child_i) => {
-                write!(f, "ptr<")?;
+                write!(f, "*")?;
                 pool[child_i].fmt(pool, f)?;
-                write!(f, ">")?;
             }
             Self::Ref(child_i) => {
-                write!(f, "ref<")?;
+                write!(f, "&")?;
                 pool[child_i].fmt(pool, f)?;
-                write!(f, ">")?;
             }
             Self::Slice(child_i) => {
-                write!(f, "slice<")?;
+                write!(f, "[]")?;
                 pool[child_i].fmt(pool, f)?;
-                write!(f, ">")?;
             }
             Self::TypeName(name) => Display::fmt(&name.escape_default(), f)?,
         }

@@ -17,8 +17,6 @@ fn main() {
     let buffers = BufferedContent::default();
     let err_collector = ErrorCollector::default();
     let ast_parser = AstParser::new(&file_name, &buffers, &err_collector);
-    for n in ast_parser {
-        println!("{:?}\n{:?}", n.src_loc(), n)
-    }
+    ast_parser.for_each(|n| println!("{:?}\n{:#?}\n", n.src_loc(), n));
     err_collector.print_and_dump_all(&buffers);
 }

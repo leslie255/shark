@@ -12,7 +12,7 @@ use crate::{
 
 use super::{
     type_expr::{TypeExpr, TypeExprNode},
-    Ast, AstNode, AstNodeRef, MathOpKind,
+    Ast, AstNode, AstNodeRef, FnDef, MathOpKind,
 };
 
 /// Owns a `TokenStream` and parses it into AST incrementally
@@ -120,9 +120,7 @@ impl<'src> AstParser<'src> {
                     node = AstNode::String(str_id).traced(token_location)
                 }
                 Token::Let => node = self.parse_let(token_location)?,
-                Token::Fn => {
-                    todo!()
-                }
+                Token::Fn => node = self.parse_fn_def(token_location)?,
                 Token::BraceOpen => {
                     let (loc, children) = self.parse_block(token_location)?;
                     let block = AstNode::Block(children);
@@ -285,19 +283,25 @@ impl<'src> AstParser<'src> {
             (Some(Token::Semicolon), true) => {
                 self.token_stream.next();
             }
-            (Some(_), true) => {
-                let loc = node.src_loc().range.1;
-                ErrorContent::ExpectsSemicolon
-                    .wrap((self.path, loc))
-                    .collect_into(self.err_collector);
-            }
+            (Some(_), true) => match node.inner() {
+                &AstNode::Block(_) | &AstNode::FnDef(_) | &AstNode::If(_) | &AstNode::Loop(_) => {}
+                _ => {
+                    let loc = node.src_loc().range.1;
+                    ErrorContent::ExpectsSemicolon
+                        .wrap((self.path, loc))
+                        .collect_into(self.err_collector);
+                }
+            },
             (Some(_), false) => {}
-            (None, true) => {
-                let loc = node.src_loc().range.1;
-                ErrorContent::ExpectsSemicolonFoundEOF
-                    .wrap((self.path, loc))
-                    .collect_into(self.err_collector);
-            }
+            (None, true) => match node.inner() {
+                &AstNode::Block(_) | &AstNode::FnDef(_) | &AstNode::If(_) | &AstNode::Loop(_) => {}
+                _ => {
+                    let loc = node.src_loc().range.1;
+                    ErrorContent::ExpectsSemicolonFoundEOF
+                        .wrap((self.path, loc))
+                        .collect_into(self.err_collector);
+                }
+            },
             (None, false) => (),
         }
         Some(node)
@@ -317,7 +321,7 @@ impl<'src> AstParser<'src> {
         let token_location = next_token.src_loc();
         let var_name = next_token
             .expect_identifier()
-            .ok_or(ErrorContent::ExpectIDAfterLet.wrap(token_location))
+            .ok_or(ErrorContent::ExpectToken(Token::Identifier("")).wrap(token_location))
             .collect_err(self.err_collector)?;
 
         // Get type
@@ -367,6 +371,7 @@ impl<'src> AstParser<'src> {
     }
 
     /// Parse arguments in a function call, starting from the `(`
+    /// Returns the arguments, and where the call ended
     /// Returns `None` if unexpected EOF, errors handled internally
     #[must_use]
     #[inline]
@@ -405,7 +410,7 @@ impl<'src> AstParser<'src> {
                     self.token_stream.next();
                     continue;
                 }
-                _ => ErrorContent::ExpectCommaOrRoundParenClose
+                _ => ErrorContent::ExpectMultipleTokens(vec![Token::RoundParenClose, Token::Comma])
                     .wrap(peeked_token.src_loc())
                     .collect_into(self.err_collector),
             }
@@ -423,7 +428,18 @@ impl<'src> AstParser<'src> {
         start_loc: SourceLocation<'src>,
     ) -> Option<(SourceLocation<'src>, Vec<AstNodeRef<'src>>)> {
         let mut nodes = Vec::<AstNodeRef<'src>>::new();
-        let mut end_loc: usize;
+        let peek_token = peek_token!(self, start_loc);
+        let mut end_loc: usize = peek_token.src_loc().range.1;
+        match peek_token.inner() {
+            &Token::BraceClose => {
+                self.token_stream.next();
+                return Some((
+                    (start_loc.file_name, start_loc.range.0, end_loc).into_source_location(),
+                    nodes,
+                ));
+            }
+            _ => (),
+        }
         loop {
             let node = self
                 .parse_expr(15, true)
@@ -443,6 +459,127 @@ impl<'src> AstParser<'src> {
         }
         let loc = (start_loc.file_name, start_loc.range.0, end_loc).into_source_location();
         Some((loc, nodes))
+    }
+
+    /// Parse an `fn` expression, starting from the token `fn`
+    /// Returns `None` if unexpected EOF, errors handled internally
+    #[must_use]
+    #[inline]
+    fn parse_fn_def(
+        &mut self,
+        start_loc: SourceLocation<'src>,
+    ) -> Option<Traced<'src, AstNode<'src>>> {
+        let next_token = next_token!(self, start_loc);
+        let loc = next_token.src_loc();
+        let name = next_token
+            .expect_identifier()
+            .ok_or(ErrorContent::ExpectToken(Token::Identifier("")).wrap(loc))
+            .collect_err(self.err_collector)?;
+        let (args, mut end_loc) = self.parse_fn_def_args(loc)?;
+        let peeked_token = peek_token!(self, (loc.file_name, end_loc));
+        let peeked_location = peeked_token.src_loc();
+        let ret_type = match peeked_token.inner() {
+            &Token::Arrow => {
+                self.token_stream.next();
+                end_loc = peeked_location.range.1;
+                self.parse_type_expr(0, peeked_location, |token_stream| {
+                    skip_to_expr_end!(token_stream)
+                })?
+            }
+            &Token::BraceOpen | &Token::Semicolon | &Token::Comma => TypeExprNode::None.wrap(),
+            _ => todo!("error"),
+        };
+        let peeked_token = next_token!(self, peeked_location);
+        let peeked_location = peeked_token.src_loc();
+        let body = match peeked_token.into_inner() {
+            Token::BraceOpen => {
+                let (body_end_loc, body) = self.parse_block(peeked_location)?;
+                end_loc = body_end_loc.range.1;
+                Some(body)
+            }
+            Token::Semicolon | Token::Comma => Option::None,
+            _ => todo!("error"),
+        };
+
+        let node = AstNode::FnDef(FnDef {
+            name,
+            args,
+            ret_type,
+            body,
+        });
+        Some(node.traced((start_loc.file_name, start_loc.range.0, end_loc)))
+    }
+
+    /// Parse arguments in a function definition, starting from the token `(`
+    /// Returns the arguments, and where the call ended
+    /// Returns `None` if unexpected EOF, errors handled internally
+    #[must_use]
+    #[inline]
+    fn parse_fn_def_args(
+        &mut self,
+        start_loc: SourceLocation<'src>,
+    ) -> Option<(Vec<(&'src str, TypeExpr<'src>)>, usize)> {
+        let mut args = Vec::<(&'src str, TypeExpr<'src>)>::new();
+        let peek_token = peek_token!(self, start_loc);
+        let loc = peek_token.src_loc();
+        if let Token::RoundParenOpen = peek_token.inner() {
+            self.token_stream.next();
+        } else {
+            ErrorContent::ExpectToken(Token::RoundParenOpen)
+                .wrap(loc)
+                .collect_into(self.err_collector)
+        }
+
+        let close_paren_loc: usize;
+        loop {
+            // If there's a `)`, break
+            let next_token = next_token!(self, start_loc);
+            let token_location = next_token.src_loc();
+            let arg_name = match next_token.into_inner() {
+                Token::RoundParenClose => {
+                    close_paren_loc = token_location.range.1;
+                    break;
+                }
+                Token::Identifier(id) => id,
+                _ => {
+                    ErrorContent::ExpectMultipleTokens(vec![
+                        Token::Identifier(""),
+                        Token::RoundParenClose,
+                    ])
+                    .wrap(token_location)
+                    .collect_into(self.err_collector);
+                    skip_to_expr_end!(self.token_stream);
+                    return None;
+                }
+            };
+            let next_token = next_token!(self, start_loc);
+            let token_location = next_token.src_loc();
+            match next_token.into_inner() {
+                Token::Colon => (),
+                _ => {
+                    todo!("error")
+                }
+            }
+            let arg_type = self.parse_type_expr(0, token_location, {
+                |token_stream| skip_to_expr_end!(token_stream)
+            })?;
+            args.push((arg_name, arg_type));
+
+            let peeked_token = peek_token!(self, start_loc);
+            match peeked_token.inner() {
+                Token::RoundParenClose => {
+                    continue;
+                }
+                Token::Comma => {
+                    self.token_stream.next();
+                    continue;
+                }
+                _ => ErrorContent::ExpectMultipleTokens(vec![Token::RoundParenClose, Token::Comma])
+                    .wrap(peeked_token.src_loc())
+                    .collect_into(self.err_collector),
+            }
+        }
+        Some((args, close_paren_loc))
     }
 
     /// Parse a type expression, starting from the token before that expression
