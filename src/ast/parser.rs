@@ -156,6 +156,8 @@ impl<'src> AstParser<'src> {
                 Token::Identifier(id) => node = AstNode::Identifier(id).traced(token_location),
                 Token::Number(num) => node = AstNode::Number(num).traced(token_location),
                 Token::Character(ch) => node = AstNode::Char(ch).traced(token_location),
+                Token::True => node = AstNode::Bool(true).traced(token_location),
+                Token::False => node = AstNode::Bool(false).traced(token_location),
                 Token::String(str) => {
                     let str_id = self.ast.add_str(str);
                     node = AstNode::String(str_id).traced(token_location)
@@ -686,6 +688,7 @@ impl<'src> AstParser<'src> {
             Token::Identifier("i8") => Some(TypeExprNode::I8.wrap()),
             Token::Identifier("char32") => Some(TypeExprNode::Char32.wrap()),
             Token::Identifier("char8") => Some(TypeExprNode::Char8.wrap()),
+            Token::Identifier("bool") => Some(TypeExprNode::Bool.wrap()),
             Token::Identifier("none") => Some(TypeExprNode::None.wrap()),
             Token::Identifier(typename) => Some(TypeExprNode::TypeName(typename).wrap()),
             Token::AndOp => {

@@ -30,6 +30,7 @@ pub enum TypeExprNode<'a> {
     I8,
     Char32,
     Char8,
+    Bool,
 
     None,
 
@@ -54,6 +55,7 @@ impl<'a> TypeExprNode<'a> {
             Self::I8 => write!(f, "i8")?,
             Self::Char32 => write!(f, "char32")?,
             Self::Char8 => write!(f, "char8")?,
+            Self::Bool => write!(f, "bool")?,
             Self::None => write!(f, "none")?,
             Self::Ptr(child_i) => {
                 write!(f, "*")?;

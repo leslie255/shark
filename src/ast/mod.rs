@@ -49,6 +49,7 @@ pub enum AstNode<'src> {
     /// By index in `Ast.str_pool`
     String(usize),
     Char(char),
+    Bool(bool),
 
     // --- Operators
     /// add, sub, mul, div
