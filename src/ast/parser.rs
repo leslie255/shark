@@ -107,7 +107,48 @@ impl<'src> AstParser<'src> {
         precedence: usize,
         expects_semicolon: bool,
     ) -> Option<Traced<'src, AstNode<'src>>> {
-        let mut node: Traced<'src, AstNode<'src>>;
+        let mut node: Traced<'src, AstNode<'src>> = Default::default();
+        macro_rules! parse {
+            (binary_op, precedence > $precedence:expr; else: $else:expr) => {{
+                if precedence <= $precedence {
+                    $else;
+                }
+                let token_loc = self.token_stream.next()?.src_loc();
+                let lhs_node_ref = self.ast.add_node(node);
+                let rhs_node = self
+                    .parse_expr($precedence, false)
+                    .ok_or(ErrorContent::UnexpectedEOF.wrap(token_loc))
+                    .collect_err(self.err_collector)?;
+                let rhs_node_ref = self.ast.add_node(rhs_node);
+                let lhs_pos = lhs_node_ref.src_loc();
+                let file_name = lhs_pos.file_name;
+                let start_index = lhs_pos.range.0;
+                let end_index = rhs_node_ref.src_loc().range.1;
+                (
+                    lhs_node_ref,
+                    rhs_node_ref,
+                    (file_name, start_index, end_index),
+                )
+            }};
+            (mono_op, precedence = $precedence:expr) => {{
+                let current_loc = node.src_loc();
+                let child = self
+                    .parse_expr($precedence, false)
+                    .ok_or(ErrorContent::UnexpectedEOF.wrap(current_loc))
+                    .collect_err(self.err_collector)?;
+                let loc = (
+                    if current_loc.file_name.is_empty() {
+                        self.path
+                    } else {
+                        current_loc.file_name
+                    },
+                    current_loc.range.0,
+                    child.src_loc().range.1,
+                );
+                let child = self.ast.add_node(child);
+                (child, loc)
+            }};
+        }
         loop {
             let token = self.token_stream.next()?;
             let token_location = token.src_loc();
@@ -127,13 +168,24 @@ impl<'src> AstParser<'src> {
                     node = block.traced(loc);
                 }
                 Token::Return => {
-                    let child = self
-                        .parse_expr(15, false)
-                        .ok_or(ErrorContent::UnexpectedEOF.wrap(token_location))
-                        .collect_err(self.err_collector)?;
-                    let loc = (token_location.file_name, token_location.range.0, child.src_loc().range.1);
-                    let child = self.ast.add_node(child);
+                    let (child, loc) = parse!(mono_op, precedence = 15);
                     node = AstNode::Return(child).traced(loc);
+                }
+                Token::AndOp => {
+                    let (child, loc) = parse!(mono_op, precedence = 1);
+                    node = AstNode::TakeRef(child).traced(loc);
+                }
+                Token::Mul => {
+                    let (child, loc) = parse!(mono_op, precedence = 1);
+                    node = AstNode::Deref(child).traced(loc);
+                }
+                Token::Add => {
+                    let (child, loc) = parse!(mono_op, precedence = 1);
+                    node = AstNode::PlusNum(child).traced(loc);
+                }
+                Token::Sub => {
+                    let (child, loc) = parse!(mono_op, precedence = 1);
+                    node = AstNode::MinusNum(child).traced(loc);
                 }
                 _ => {
                     ErrorContent::UnexpectedToken
@@ -145,23 +197,6 @@ impl<'src> AstParser<'src> {
             break;
         }
         loop {
-            macro_rules! parse_binary_op_expr {
-                ($precedence: expr) => {{
-                    if precedence <= $precedence {
-                        break;
-                    }
-                    let token_loc = self.token_stream.next()?.src_loc();
-                    let lhs_node_ref = self.ast.add_node(node);
-                    let rhs_node = self
-                        .parse_expr($precedence, false)
-                        .ok_or(ErrorContent::UnexpectedEOF.wrap(token_loc))
-                        .collect_err(self.err_collector)?;
-                    let rhs_node_ref = self.ast.add_node(rhs_node);
-                    let start_index = lhs_node_ref.src_loc().range.0;
-                    let end_index = rhs_node_ref.src_loc().range.1;
-                    (lhs_node_ref, rhs_node_ref, (start_index, end_index))
-                }};
-            }
             let peek = match self.token_stream.peek() {
                 Some(t) => t,
                 None => break,
@@ -170,107 +205,107 @@ impl<'src> AstParser<'src> {
             // node and preduce a new one that is the root of this binary operator expression
             match peek.inner() {
                 Token::Mul => {
-                    let (l, r, pos) = parse_binary_op_expr!(3);
-                    node = AstNode::MathOp(MathOpKind::Mul, l, r).traced((self.path, pos));
+                    let (l, r, pos) = parse!(binary_op, precedence > 3; else: break);
+                    node = AstNode::MathOp(MathOpKind::Mul, l, r).traced(pos);
                     continue;
                 }
                 Token::Div => {
-                    let (l, r, pos) = parse_binary_op_expr!(3);
-                    node = AstNode::MathOp(MathOpKind::Div, l, r).traced((self.path, pos));
+                    let (l, r, pos) = parse!(binary_op, precedence > 3; else: break);
+                    node = AstNode::MathOp(MathOpKind::Div, l, r).traced(pos);
                     continue;
                 }
                 Token::Mod => {
-                    let (l, r, pos) = parse_binary_op_expr!(3);
-                    node = AstNode::MathOp(MathOpKind::Mod, l, r).traced((self.path, pos));
+                    let (l, r, pos) = parse!(binary_op, precedence > 3; else: break);
+                    node = AstNode::MathOp(MathOpKind::Mod, l, r).traced(pos);
                     continue;
                 }
                 Token::Add => {
-                    let (l, r, pos) = parse_binary_op_expr!(4);
-                    node = AstNode::MathOp(MathOpKind::Add, l, r).traced((self.path, pos));
+                    let (l, r, pos) = parse!(binary_op, precedence > 4; else: break);
+                    node = AstNode::MathOp(MathOpKind::Add, l, r).traced(pos);
                     continue;
                 }
                 Token::Sub => {
-                    let (l, r, pos) = parse_binary_op_expr!(4);
-                    node = AstNode::MathOp(MathOpKind::Sub, l, r).traced((self.path, pos));
+                    let (l, r, pos) = parse!(binary_op, precedence > 4; else: break);
+                    node = AstNode::MathOp(MathOpKind::Sub, l, r).traced(pos);
                     continue;
                 }
                 Token::LeLe => {
-                    let (l, r, pos) = parse_binary_op_expr!(5);
-                    node = AstNode::BitOp(BitOpKind::Sl, l, r).traced((self.path, pos));
+                    let (l, r, pos) = parse!(binary_op, precedence > 5; else: break);
+                    node = AstNode::BitOp(BitOpKind::Sl, l, r).traced(pos);
                     continue;
                 }
                 Token::GrGr => {
-                    let (l, r, pos) = parse_binary_op_expr!(5);
-                    node = AstNode::BitOp(BitOpKind::Sr, l, r).traced((self.path, pos));
+                    let (l, r, pos) = parse!(binary_op, precedence > 5; else: break);
+                    node = AstNode::BitOp(BitOpKind::Sr, l, r).traced(pos);
                     continue;
                 }
                 Token::AndOp => {
-                    let (l, r, pos) = parse_binary_op_expr!(8);
-                    node = AstNode::BitOp(BitOpKind::And, l, r).traced((self.path, pos));
+                    let (l, r, pos) = parse!(binary_op, precedence > 8; else: break);
+                    node = AstNode::BitOp(BitOpKind::And, l, r).traced(pos);
                     continue;
                 }
                 Token::XorOp => {
-                    let (l, r, pos) = parse_binary_op_expr!(8);
-                    node = AstNode::BitOp(BitOpKind::Xor, l, r).traced((self.path, pos));
+                    let (l, r, pos) = parse!(binary_op, precedence > 8; else: break);
+                    node = AstNode::BitOp(BitOpKind::Xor, l, r).traced(pos);
                     continue;
                 }
                 Token::OrOp => {
-                    let (l, r, pos) = parse_binary_op_expr!(8);
-                    node = AstNode::BitOp(BitOpKind::Or, l, r).traced((self.path, pos));
+                    let (l, r, pos) = parse!(binary_op, precedence > 8; else: break);
+                    node = AstNode::BitOp(BitOpKind::Or, l, r).traced(pos);
                     continue;
                 }
                 Token::Eq => {
-                    let (l, r, pos) = parse_binary_op_expr!(14);
-                    node = AstNode::Assign(l, r).traced((self.path, pos));
+                    let (l, r, pos) = parse!(binary_op, precedence > 14; else: break);
+                    node = AstNode::Assign(l, r).traced(pos);
                     continue;
                 }
                 Token::AddEq => {
-                    let (l, r, pos) = parse_binary_op_expr!(14);
-                    node = AstNode::MathOpAssign(MathOpKind::Add, l, r).traced((self.path, pos));
+                    let (l, r, pos) = parse!(binary_op, precedence > 14; else: break);
+                    node = AstNode::MathOpAssign(MathOpKind::Add, l, r).traced(pos);
                     continue;
                 }
                 Token::SubEq => {
-                    let (l, r, pos) = parse_binary_op_expr!(14);
-                    node = AstNode::MathOpAssign(MathOpKind::Sub, l, r).traced((self.path, pos));
+                    let (l, r, pos) = parse!(binary_op, precedence > 14; else: break);
+                    node = AstNode::MathOpAssign(MathOpKind::Sub, l, r).traced(pos);
                     continue;
                 }
                 Token::MulEq => {
-                    let (l, r, pos) = parse_binary_op_expr!(14);
-                    node = AstNode::MathOpAssign(MathOpKind::Mul, l, r).traced((self.path, pos));
+                    let (l, r, pos) = parse!(binary_op, precedence > 14; else: break);
+                    node = AstNode::MathOpAssign(MathOpKind::Mul, l, r).traced(pos);
                 }
                 Token::DivEq => {
-                    let (l, r, pos) = parse_binary_op_expr!(14);
-                    node = AstNode::MathOpAssign(MathOpKind::Div, l, r).traced((self.path, pos));
+                    let (l, r, pos) = parse!(binary_op, precedence > 14; else: break);
+                    node = AstNode::MathOpAssign(MathOpKind::Div, l, r).traced(pos);
                     continue;
                 }
                 Token::ModEq => {
-                    let (l, r, pos) = parse_binary_op_expr!(14);
-                    node = AstNode::MathOpAssign(MathOpKind::Mod, l, r).traced((self.path, pos));
+                    let (l, r, pos) = parse!(binary_op, precedence > 14; else: break);
+                    node = AstNode::MathOpAssign(MathOpKind::Mod, l, r).traced(pos);
                     continue;
                 }
                 Token::LeLeEq => {
-                    let (l, r, pos) = parse_binary_op_expr!(14);
-                    node = AstNode::BitOpAssign(BitOpKind::Sl, l, r).traced((self.path, pos));
+                    let (l, r, pos) = parse!(binary_op, precedence > 14; else: break);
+                    node = AstNode::BitOpAssign(BitOpKind::Sl, l, r).traced(pos);
                     continue;
                 }
                 Token::GrGrEq => {
-                    let (l, r, pos) = parse_binary_op_expr!(14);
-                    node = AstNode::BitOpAssign(BitOpKind::Sr, l, r).traced((self.path, pos));
+                    let (l, r, pos) = parse!(binary_op, precedence > 14; else: break);
+                    node = AstNode::BitOpAssign(BitOpKind::Sr, l, r).traced(pos);
                     continue;
                 }
                 Token::AndEq => {
-                    let (l, r, pos) = parse_binary_op_expr!(14);
-                    node = AstNode::BitOpAssign(BitOpKind::And, l, r).traced((self.path, pos));
+                    let (l, r, pos) = parse!(binary_op, precedence > 14; else: break);
+                    node = AstNode::BitOpAssign(BitOpKind::And, l, r).traced(pos);
                     continue;
                 }
                 Token::OrEq => {
-                    let (l, r, pos) = parse_binary_op_expr!(14);
-                    node = AstNode::BitOpAssign(BitOpKind::Or, l, r).traced((self.path, pos));
+                    let (l, r, pos) = parse!(binary_op, precedence > 14; else: break);
+                    node = AstNode::BitOpAssign(BitOpKind::Or, l, r).traced(pos);
                     continue;
                 }
                 Token::XorEq => {
-                    let (l, r, pos) = parse_binary_op_expr!(14);
-                    node = AstNode::BitOpAssign(BitOpKind::Xor, l, r).traced((self.path, pos));
+                    let (l, r, pos) = parse!(binary_op, precedence > 14; else: break);
+                    node = AstNode::BitOpAssign(BitOpKind::Xor, l, r).traced(pos);
                     continue;
                 }
                 Token::RoundParenOpen => {

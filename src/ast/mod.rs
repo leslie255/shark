@@ -53,6 +53,10 @@ pub enum AstNode<'src> {
     // --- Operators
     /// add, sub, mul, div
     MathOp(MathOpKind, AstNodeRef<'src>, AstNodeRef<'src>),
+    /// used when a minus sign is in front of a number, such as `-255`
+    MinusNum(AstNodeRef<'src>),
+    /// used when a plus sign is in front of a number, such as `+255`
+    PlusNum(AstNodeRef<'src>),
     /// and, or, xor
     /// Not including not because not doesn't have an RHS
     BitOp(BitOpKind, AstNodeRef<'src>, AstNodeRef<'src>),
@@ -82,8 +86,15 @@ pub enum AstNode<'src> {
     Return(AstNodeRef<'src>),
 }
 impl<'src> AstNode<'src> {
+    #[inline]
     pub fn traced(self, loc: impl IntoSourceLoc<'src>) -> Traced<'src, Self> {
         Traced::new(self, loc.into_source_location())
+    }
+}
+
+impl<'src> Default for AstNode<'src> {
+    fn default() -> Self {
+        Self::Number(0u64.into())
     }
 }
 

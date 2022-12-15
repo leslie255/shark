@@ -114,6 +114,21 @@ pub struct Traced<'src, T> {
     src_loc: SourceLocation<'src>,
 }
 
+impl<'src, T> Default for Traced<'src, T>
+where
+    T: Default,
+{
+    fn default() -> Self {
+        Self {
+            inner: Default::default(),
+            src_loc: SourceLocation {
+                file_name: "",
+                range: (0, 0),
+            },
+        }
+    }
+}
+
 impl<'src, T> Traced<'src, T> {
     /// Wrap an thing into `Traced`
     /// Call this function by...

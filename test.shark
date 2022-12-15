@@ -1,6 +1,7 @@
 fn main() -> i32 {
-    let a = 250;
-    let b = a + 5;
+    let a = -124;
+    let p = &a;
+    let b = *a * 2 + 2;
     printf("b = %d\n", b);
-    return 0;
+    return 0+1;
 }
