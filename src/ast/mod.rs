@@ -118,31 +118,61 @@ pub struct FnDef<'a> {
 
 impl Debug for FnDef<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", self.name.escape_default())?;
-        let arg_count = self.args.len();
-        match arg_count {
-            0 => write!(f, "()")?,
-            1 => {
-                let (name, dtype) = unsafe { self.args.first().unwrap_unchecked() };
-                write!(f, "({}:{:?})", name, dtype)?;
+        fmt_fn_head(f, self)?;
+        let body = match &self.body {
+            Some(b) => b,
+            None => return Ok(()),
+        };
+        if f.alternate() {
+            writeln!(f, " {{")?;
+            for n in body {
+                f.pad("")?;
+                writeln!(f, "\t{:?}\n\t{:?}\n", n.src_loc(), n)?;
             }
-            _ => {
-                write!(f, "(")?;
-                for (name, dtype) in self.args[0..self.args.len() - 1].iter() {
-                    write!(f, "{}:{:?},", name.escape_default(), dtype)?;
-                }
-                let (name, dtype) = unsafe { self.args.last().unwrap_unchecked() };
-                write!(f, "{}:{:?}", name.escape_default(), dtype)?;
-                write!(f, ")")?;
+        } else {
+            write!(f, "{{")?;
+            for n in body {
+                print!("{:?}\t{:?};", n.src_loc(), n);
             }
         }
-        write!(f, "->")?;
-        self.ret_type.fmt(f)?;
-        if let Some(body) = &self.body {
-            body.fmt(f)?;
-        }
+        write!(f, "}}")?;
         Ok(())
     }
+}
+
+#[inline]
+fn fmt_fn_head<'src>(f: &mut std::fmt::Formatter<'_>, fn_def: &FnDef<'src>) -> std::fmt::Result {
+    write!(f, "{}", fn_def.name.escape_default())?;
+    let arg_count = fn_def.args.len();
+    match arg_count {
+        0 => write!(f, "()")?,
+        1 => {
+            let (name, dtype) = unsafe { fn_def.args.first().unwrap_unchecked() };
+            write!(f, "({}:{:?})", name, dtype)?;
+        }
+        _ => {
+            write!(f, "(")?;
+            if f.alternate() {
+                for (name, dtype) in fn_def.args[0..fn_def.args.len() - 1].iter() {
+                    write!(f, "{}:{:?}, ", name.escape_default(), dtype)?;
+                }
+            } else {
+                for (name, dtype) in fn_def.args[0..fn_def.args.len() - 1].iter() {
+                    write!(f, "{}:{:?},", name.escape_default(), dtype)?;
+                }
+            }
+            let (name, dtype) = unsafe { fn_def.args.last().unwrap_unchecked() };
+            write!(f, "{}:{:?}", name.escape_default(), dtype)?;
+            write!(f, ")")?;
+        }
+    }
+    if f.alternate() {
+        write!(f, " -> ")?;
+    } else {
+        write!(f, "->")?;
+    }
+    fn_def.ret_type.fmt(f)?;
+    Ok(())
 }
 
 #[derive(Debug, Clone)]
