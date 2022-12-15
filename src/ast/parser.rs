@@ -167,6 +167,7 @@ impl<'src> AstParser<'src> {
                     let block = AstNode::Block(children);
                     node = block.traced(loc);
                 }
+                Token::RoundParenOpen => node = self.parse_paren(token_location)?,
                 Token::Return => {
                     let (child, loc) = parse!(mono_op, precedence = 15);
                     node = AstNode::Return(child).traced(loc);
@@ -196,13 +197,13 @@ impl<'src> AstParser<'src> {
             }
             break;
         }
+        // If there is an operator and the precedence matches, parse the rhs, "swallow" the node,
+        // use it as the LHS, and preduce a new node that is the root of this binary operator
         loop {
             let peek = match self.token_stream.peek() {
                 Some(t) => t,
                 None => break,
             };
-            // If there is an operator && the precedence matches, parse the rhs, "swallow" the
-            // node and preduce a new one that is the root of this binary operator expression
             match peek.inner() {
                 Token::Mul => {
                     let (l, r, pos) = parse!(binary_op, precedence > 3; else: break);
@@ -460,6 +461,38 @@ impl<'src> AstParser<'src> {
             }
         }
         Some((args, close_paren_loc))
+    }
+
+    /// Parse inside a `(...)`, starting from the `(`
+    /// Returns the `SourceLocation` of the node, and the child node
+    /// Returns `None` if unexpected EOF, errors handled internally
+    #[must_use]
+    #[inline]
+    fn parse_paren(
+        &mut self,
+        start_loc: SourceLocation<'src>,
+    ) -> Option<Traced<'src, AstNode<'src>>> {
+        let inner_node = self
+            .parse_expr(15, false)
+            .ok_or(ErrorContent::UnexpectedEOF.wrap(start_loc))
+            .collect_err(self.err_collector)?;
+
+        // check if there is a closing parenthese
+        let loc = inner_node.src_loc();
+        let peek = peek_token!(self, (loc.file_name, loc.range.1));
+        let peek_loc = peek.src_loc();
+        match peek.inner() {
+            Token::RoundParenClose => {
+                self.token_stream.next();
+            }
+            _ => {
+                ErrorContent::ExpectToken(Token::RoundParenClose)
+                    .wrap(peek_loc)
+                    .collect_into(self.err_collector);
+            }
+        }
+
+        Some(inner_node)
     }
 
     /// Parse a block, starting from the `{`
