@@ -164,6 +164,7 @@ impl<'src> AstParser<'src> {
                 }
                 Token::Let => node = self.parse_let(token_location)?,
                 Token::Fn => node = self.parse_fn_def(token_location)?,
+                Token::Loop => node = self.parse_loop(token_location)?,
                 Token::BraceOpen => {
                     let (loc, children) = self.parse_block(token_location)?;
                     let block = AstNode::Block(children);
@@ -375,6 +376,7 @@ impl<'src> AstParser<'src> {
             }
         }
         // End of expression
+        // Semicolon check
         let next = self.token_stream.peek().map(|t| t.inner());
         match (next, expects_semicolon) {
             (Some(Token::Semicolon), true) => {
@@ -588,6 +590,34 @@ impl<'src> AstParser<'src> {
         }
         let loc = (start_loc.file_name, start_loc.range.0, end_loc).into_source_location();
         Some((loc, nodes))
+    }
+
+    /// Parse a `loop` expression, starting from the token `loop`
+    /// Returns `None` if unexpected EOF, errors handled internally
+    #[must_use]
+    #[inline]
+    fn parse_loop(
+        &mut self,
+        start_loc: SourceLocation<'src>,
+    ) -> Option<Traced<'src, AstNode<'src>>> {
+        let peek_token = peek_token!(self, start_loc);
+        let peek_location = peek_token.src_loc();
+        match peek_token.inner() {
+            &Token::BraceOpen =>{
+                self.token_stream.next();
+                let (end_loc, body) = self.parse_block(peek_location)?;
+                let node = AstNode::Loop(body).traced((start_loc.file_name, start_loc.range.0, end_loc.range.1));
+                Some(node)
+            }
+            _ => {
+                ErrorContent::ExpectToken(Token::BraceOpen)
+                    .wrap(peek_location)
+                    .collect_into(self.err_collector);
+                // parse the expression regardless
+                let node = self.parse_expr(15, false)?;
+                Some(node)
+            }
+        }
     }
 
     /// Parse an `fn` expression, starting from the token `fn`

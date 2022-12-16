@@ -1,6 +1,7 @@
 fn main() -> i32 {
-    let x = true && false;
-    x != 6 >= 9;
+    loop {
+        "lol";
+    }
     return 0;
 }
 
