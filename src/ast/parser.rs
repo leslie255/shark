@@ -775,6 +775,7 @@ impl<'src> AstParser<'src> {
                         let mut node =
                             self.parse_type_expr(recursive_counter + 1, current_loc, err_handler)?;
                         node.pool.push(TypeExprNode::Slice(node.root));
+                        node.root = node.pool.len() - 1;
                         node
                     }
                     Token::Number(numval) => {
@@ -794,6 +795,7 @@ impl<'src> AstParser<'src> {
                         let mut node =
                             self.parse_type_expr(recursive_counter + 1, current_loc, err_handler)?;
                         node.pool.push(TypeExprNode::Array(arr_len, node.root));
+                        node.root = node.pool.len() - 1;
                         node
                     }
                     _ => {
@@ -801,6 +803,7 @@ impl<'src> AstParser<'src> {
                         let mut node =
                             self.parse_type_expr(recursive_counter + 1, current_loc, err_handler)?;
                         node.pool.push(TypeExprNode::Slice(node.root));
+                        node.root = node.pool.len() - 1;
                         node
                     }
                 };
