@@ -85,6 +85,8 @@ pub enum AstNode<'src> {
     Loop(Vec<AstNodeRef<'src>>),
 
     Return(AstNodeRef<'src>),
+    Break,
+    Continue,
 }
 impl<'src> AstNode<'src> {
     #[inline]

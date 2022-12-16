@@ -177,6 +177,8 @@ impl<'src> AstParser<'src> {
                     let (child, loc) = parse!(mono_op, precedence = 15);
                     node = AstNode::Return(child).traced(loc);
                 }
+                Token::Break => node = AstNode::Break.traced(token_location),
+                Token::Continue => node = AstNode::Continue.traced(token_location),
                 Token::AndOp => {
                     let (child, loc) = parse!(mono_op, precedence = 1);
                     node = AstNode::TakeRef(child).traced(loc);
