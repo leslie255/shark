@@ -53,17 +53,16 @@ pub enum AstNode<'src> {
     Array(Vec<AstNodeRef<'src>>),
 
     // --- Operators
-    /// add, sub, mul, div
     MathOp(MathOpKind, AstNodeRef<'src>, AstNodeRef<'src>),
     /// used when a minus sign is in front of a number, such as `-255`
     MinusNum(AstNodeRef<'src>),
     /// used when a plus sign is in front of a number, such as `+255`
     PlusNum(AstNodeRef<'src>),
-    /// and, or, xor
-    /// Not including not because not doesn't have an RHS
     BitOp(BitOpKind, AstNodeRef<'src>, AstNodeRef<'src>),
-    /// Bitwise NOT (~)
+    BoolOp(BoolOpKind, AstNodeRef<'src>, AstNodeRef<'src>),
+    Cmp(CmpKind, AstNodeRef<'src>, AstNodeRef<'src>),
     BitNot(AstNodeRef<'src>),
+    BoolNot(AstNodeRef<'src>),
 
     Call(AstNodeRef<'src>, Vec<AstNodeRef<'src>>),
 
@@ -216,4 +215,24 @@ pub enum BitOpKind {
 
     Sl,
     Sr,
+}
+
+/// Type of a bitwise operations
+/// Not including `not`, because `not` doesn't have an RHS
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BoolOpKind {
+    And,
+    Or,
+}
+
+/// Type of a bitwise operations
+/// Not including `not`, because `not` doesn't have an RHS
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CmpKind {
+    Eq,
+    Neq,
+    Gr,
+    Le,
+    GrEq,
+    LeEq,
 }

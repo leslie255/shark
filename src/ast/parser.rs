@@ -1,7 +1,7 @@
 use std::iter::Peekable;
 
 use crate::{
-    ast::BitOpKind,
+    ast::{BitOpKind, BoolOpKind, CmpKind},
     buffered_content::BufferedContent,
     error::{
         location::{IntoSourceLoc, SourceLocation, Traced},
@@ -192,8 +192,13 @@ impl<'src> AstParser<'src> {
                     node = AstNode::MinusNum(child).traced(loc);
                 }
                 Token::Squiggle => {
-                    let (child, loc) = parse!(mono_op, precedence = 1);
+                    let (child, loc) = parse!(mono_op, precedence = 2);
                     node = AstNode::BitNot(child).traced(loc);
+                }
+                Token::Exc => {
+                    let (child, loc) = parse!(mono_op, precedence = 2);
+                    node = AstNode::BoolNot(child).traced(loc);
+                    continue;
                 }
                 _ => {
                     ErrorContent::UnexpectedToken
@@ -314,6 +319,46 @@ impl<'src> AstParser<'src> {
                 Token::XorEq => {
                     let (l, r, pos) = parse!(binary_op, precedence > 14; else: break);
                     node = AstNode::BitOpAssign(BitOpKind::Xor, l, r).traced(pos);
+                    continue;
+                }
+                Token::AndAnd => {
+                    let (l, r, pos) = parse!(binary_op, precedence > 11; else: break);
+                    node = AstNode::BoolOp(BoolOpKind::And, l, r).traced(pos);
+                    continue;
+                }
+                Token::OrOr => {
+                    let (l, r, pos) = parse!(binary_op, precedence > 12; else: break);
+                    node = AstNode::BoolOp(BoolOpKind::Or, l, r).traced(pos);
+                    continue;
+                }
+                Token::EqEq => {
+                    let (l, r, pos) = parse!(binary_op, precedence > 7; else: break);
+                    node = AstNode::Cmp(CmpKind::Eq, l, r).traced(pos);
+                    continue;
+                }
+                Token::ExcEq => {
+                    let (l, r, pos) = parse!(binary_op, precedence > 7; else: break);
+                    node = AstNode::Cmp(CmpKind::Neq, l, r).traced(pos);
+                    continue;
+                }
+                Token::Le => {
+                    let (l, r, pos) = parse!(binary_op, precedence > 6; else: break);
+                    node = AstNode::Cmp(CmpKind::Le, l, r).traced(pos);
+                    continue;
+                }
+                Token::Gr => {
+                    let (l, r, pos) = parse!(binary_op, precedence > 6; else: break);
+                    node = AstNode::Cmp(CmpKind::Gr, l, r).traced(pos);
+                    continue;
+                }
+                Token::LeEq => {
+                    let (l, r, pos) = parse!(binary_op, precedence > 6; else: break);
+                    node = AstNode::Cmp(CmpKind::LeEq, l, r).traced(pos);
+                    continue;
+                }
+                Token::GrEq => {
+                    let (l, r, pos) = parse!(binary_op, precedence > 6; else: break);
+                    node = AstNode::Cmp(CmpKind::GrEq, l, r).traced(pos);
                     continue;
                 }
                 Token::RoundParenOpen => {
