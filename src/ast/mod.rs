@@ -83,10 +83,11 @@ pub enum AstNode<'src> {
     FnDef(FnDef<'src>),
     If(IfExpr<'src>),
     Loop(Vec<AstNodeRef<'src>>),
-
     Return(AstNodeRef<'src>),
     Break,
     Continue,
+
+    Typecast(AstNodeRef<'src>, TypeExpr<'src>),
 }
 impl<'src> AstNode<'src> {
     #[inline]

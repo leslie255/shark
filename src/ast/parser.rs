@@ -100,7 +100,6 @@ impl<'src> AstParser<'src> {
         &self.ast.str_pool
     }
     /// Operator precedence is similar to C, expect:
-    /// - Slot for tenary conditional operator `?:` as replaced by `as`
     #[must_use]
     fn parse_expr(
         &mut self,
@@ -363,6 +362,21 @@ impl<'src> AstParser<'src> {
                 Token::GrEq => {
                     let (l, r, pos) = parse!(binary_op, precedence > 6; else: break);
                     node = AstNode::Cmp(CmpKind::GrEq, l, r).traced(pos);
+                    continue;
+                }
+                Token::As => {
+                    if precedence <= 2 {
+                        break;
+                    }
+                    let token_loc = self.token_stream.next()?.src_loc();
+                    let node_loc = node.src_loc();
+                    let node_ref = self.ast.add_node(node);
+                    let dtype = self.parse_type_expr(0, token_loc, |_| {})?;
+                    node = AstNode::Typecast(node_ref, dtype).traced((
+                        node_loc.file_name,
+                        node_loc.range.0,
+                        token_loc.range.1,
+                    ));
                     continue;
                 }
                 Token::RoundParenOpen => {
