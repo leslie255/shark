@@ -88,6 +88,8 @@ pub enum AstNode<'src> {
     Continue,
 
     Typecast(AstNodeRef<'src>, TypeExpr<'src>),
+
+    Tuple(Vec<Traced<'src, AstNode<'src>>>),
 }
 impl<'src> AstNode<'src> {
     #[inline]

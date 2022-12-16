@@ -543,27 +543,77 @@ impl<'src> AstParser<'src> {
         &mut self,
         start_loc: SourceLocation<'src>,
     ) -> Option<Traced<'src, AstNode<'src>>> {
+        let peek_token = peek_token!(self, start_loc);
+        let peek_location = peek_token.src_loc();
+        if let &Token::RoundParenClose = peek_token.inner() {
+            self.token_stream.next();
+            return Some(AstNode::Tuple(Vec::new()).traced((
+                start_loc.file_name,
+                start_loc.range.0,
+                peek_location.range.1,
+            )));
+        }
         let inner_node = self
             .parse_expr(15, false)
             .ok_or(ErrorContent::UnexpectedEOF.wrap(start_loc))
             .collect_err(self.err_collector)?;
 
-        // check if there is a closing parenthese
+        // if there's a closing parenthese, then it's just one node, if it's a comma, then it's a
+        // tuple
         let loc = inner_node.src_loc();
         let peek = peek_token!(self, (loc.file_name, loc.range.1));
         let peek_loc = peek.src_loc();
         match peek.inner() {
             Token::RoundParenClose => {
                 self.token_stream.next();
+                Some(inner_node)
+            }
+            Token::Comma => {
+                self.token_stream.next();
+                let mut previous_loc = peek_loc;
+                let mut nodes = vec![inner_node];
+                let end_loc = loop {
+                    let peek = peek_token!(self, previous_loc);
+                    let peek_loc = peek.src_loc();
+                    if let Token::RoundParenClose = peek.inner() {
+                        self.token_stream.next();
+                        break peek_loc;
+                    }
+                    let node = self
+                        .parse_expr(15, false)
+                        .ok_or(ErrorContent::UnexpectedEOF.wrap(peek_loc))
+                        .collect_err(self.err_collector)?;
+                    previous_loc = node.src_loc();
+                    nodes.push(node);
+                    let peek = peek_token!(self, previous_loc);
+                    let peek_loc = peek.src_loc();
+                    match peek.inner() {
+                        Token::Comma => {
+                            self.token_stream.next();
+                        }
+                        Token::RoundParenClose => continue,
+                        _ => {
+                            ErrorContent::ExpectMultipleTokens(vec![
+                                Token::Comma,
+                                Token::RoundParenClose,
+                            ])
+                            .wrap(peek_loc)
+                            .collect_into(self.err_collector);
+                            break peek_loc;
+                        }
+                    }
+                };
+                let node = AstNode::Tuple(nodes);
+                let node = node.traced((start_loc.file_name, start_loc.range.0, end_loc.range.1));
+                Some(node)
             }
             _ => {
-                ErrorContent::ExpectToken(Token::RoundParenClose)
+                ErrorContent::ExpectMultipleTokens(vec![Token::RoundParenClose, Token::Comma])
                     .wrap(peek_loc)
                     .collect_into(self.err_collector);
+                Some(inner_node)
             }
         }
-
-        Some(inner_node)
     }
 
     /// Parse a block, starting from the `{`

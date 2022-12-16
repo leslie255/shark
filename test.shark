@@ -1,5 +1,6 @@
 fn main() -> i32 {
-    a as T;
+    (0, 1, 2);
+    ();
     return 0;
 }
 
