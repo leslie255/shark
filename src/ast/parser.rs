@@ -191,6 +191,10 @@ impl<'src> AstParser<'src> {
                     let (child, loc) = parse!(mono_op, precedence = 1);
                     node = AstNode::MinusNum(child).traced(loc);
                 }
+                Token::Squiggle => {
+                    let (child, loc) = parse!(mono_op, precedence = 1);
+                    node = AstNode::BitNot(child).traced(loc);
+                }
                 _ => {
                     ErrorContent::UnexpectedToken
                         .wrap(token_location)
