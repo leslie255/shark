@@ -15,11 +15,19 @@ pub mod tokenizer;
 mod iterstack;
 
 #[allow(dead_code)]
-#[derive(Clone, Copy, PartialEq)]
+#[derive(Clone, Copy)]
 pub enum NumValue {
     U(u64),
     I(i64),
     F(f64),
+}
+impl NumValue {
+    pub fn as_unsigned(self) -> Option<u64> {
+        match self {
+            Self::U(u) => Some(u),
+            _ => None,
+        }
+    }
 }
 impl Debug for NumValue {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -46,7 +54,7 @@ impl From<f64> for NumValue {
     }
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone)]
 pub enum Token<'a> {
     // --- Values
     /// Identifier name string is sliced from the source string, owned by `BufferedSources`

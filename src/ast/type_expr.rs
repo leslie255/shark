@@ -37,6 +37,8 @@ pub enum TypeExprNode<'a> {
     Ptr(usize),
     Ref(usize),
     Slice(usize),
+    /// length, child node
+    Array(u64, usize),
 
     TypeName(&'a str),
 }
@@ -67,6 +69,10 @@ impl<'a> TypeExprNode<'a> {
             }
             Self::Slice(child_i) => {
                 write!(f, "[]")?;
+                pool[child_i].fmt(pool, f)?;
+            }
+            Self::Array(len, child_i) => {
+                write!(f, "[{}]", len)?;
                 pool[child_i].fmt(pool, f)?;
             }
             Self::TypeName(name) => Display::fmt(&name.escape_default(), f)?,

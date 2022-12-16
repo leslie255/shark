@@ -50,6 +50,7 @@ pub enum AstNode<'src> {
     String(usize),
     Char(char),
     Bool(bool),
+    Array(Vec<AstNodeRef<'src>>),
 
     // --- Operators
     /// add, sub, mul, div

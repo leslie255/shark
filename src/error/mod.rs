@@ -42,9 +42,7 @@ pub enum ErrorContent<'src> {
     LetNoTypeOrRHS,
     ExpectToken(Token<'src>),
     ExpectMultipleTokens(Vec<Token<'src>>),
-
-    #[allow(dead_code)]
-    VarNotExist(&'src str),
+    NonUIntForArrLen,
 }
 impl<'src> ErrorContent<'src> {
     #[must_use]
@@ -78,7 +76,7 @@ impl<'src> ErrorContent<'src> {
             Self::LetNoTypeOrRHS => "missing type annotation for let expression",
             Self::ExpectToken(_) => "expect token",
             Self::ExpectMultipleTokens(_) => "expect tokens",
-            Self::VarNotExist(_) => "variable does not exist",
+            Self::NonUIntForArrLen => "expect unsigned integer for array",
         }
     }
     fn description(&self) -> String {
@@ -118,9 +116,7 @@ impl<'src> ErrorContent<'src> {
             Self::ExpectToken(t) => format!("Expect {:?}", t),
             // TODO: pretty format this
             Self::ExpectMultipleTokens(tokens) => format!("Expect tokens: {:?}", tokens),
-            Self::VarNotExist(s) => {
-                format!("Variable `{}` not found in the current scope", s)
-            }
+            Self::NonUIntForArrLen => "Array length should be an unsigned integer".to_string(),
         }
     }
 }
@@ -137,6 +133,8 @@ impl<'src> Error<'src> {
     }
 }
 
+/// A container that collects all compile errors
+/// Uses internal mutability because it is write-only
 #[derive(Debug, Clone, Default)]
 pub struct ErrorCollector<'src> {
     errors: RefCell<Vec<Error<'src>>>,

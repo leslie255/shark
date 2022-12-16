@@ -38,11 +38,13 @@ pub trait IntoSourceLoc<'a> {
     fn into_source_location(self) -> SourceLocation<'a>;
 }
 impl<'a> IntoSourceLoc<'a> for SourceLocation<'a> {
+    #[inline]
     fn into_source_location(self) -> SourceLocation<'a> {
         self
     }
 }
 impl<'a> IntoSourceLoc<'a> for (&'a str, SourceIndex<'a>) {
+    #[inline]
     fn into_source_location(self) -> SourceLocation<'a> {
         SourceLocation {
             file_name: self.0,
@@ -51,6 +53,7 @@ impl<'a> IntoSourceLoc<'a> for (&'a str, SourceIndex<'a>) {
     }
 }
 impl<'a> IntoSourceLoc<'a> for (&'a str, (SourceIndex<'a>, SourceIndex<'a>)) {
+    #[inline]
     fn into_source_location(self) -> SourceLocation<'a> {
         SourceLocation {
             file_name: self.0,
@@ -59,6 +62,7 @@ impl<'a> IntoSourceLoc<'a> for (&'a str, (SourceIndex<'a>, SourceIndex<'a>)) {
     }
 }
 impl<'a> IntoSourceLoc<'a> for (&'a str, SourceIndex<'a>, SourceIndex<'a>) {
+    #[inline]
     fn into_source_location(self) -> SourceLocation<'a> {
         SourceLocation {
             file_name: self.0,
@@ -67,6 +71,7 @@ impl<'a> IntoSourceLoc<'a> for (&'a str, SourceIndex<'a>, SourceIndex<'a>) {
     }
 }
 impl<'a> IntoSourceLoc<'a> for (&'a str, Range<SourceIndex<'a>>) {
+    #[inline]
     fn into_source_location(self) -> SourceLocation<'a> {
         SourceLocation {
             file_name: self.0,
@@ -75,6 +80,7 @@ impl<'a> IntoSourceLoc<'a> for (&'a str, Range<SourceIndex<'a>>) {
     }
 }
 impl<'a> IntoSourceLoc<'a> for (&'a str, usize) {
+    #[inline]
     fn into_source_location(self) -> SourceLocation<'a> {
         SourceLocation {
             file_name: self.0,
@@ -83,6 +89,7 @@ impl<'a> IntoSourceLoc<'a> for (&'a str, usize) {
     }
 }
 impl<'a> IntoSourceLoc<'a> for (&'a str, (usize, usize)) {
+    #[inline]
     fn into_source_location(self) -> SourceLocation<'a> {
         SourceLocation {
             file_name: self.0,
@@ -91,6 +98,7 @@ impl<'a> IntoSourceLoc<'a> for (&'a str, (usize, usize)) {
     }
 }
 impl<'a> IntoSourceLoc<'a> for (&'a str, usize, usize) {
+    #[inline]
     fn into_source_location(self) -> SourceLocation<'a> {
         SourceLocation {
             file_name: self.0,
@@ -99,6 +107,7 @@ impl<'a> IntoSourceLoc<'a> for (&'a str, usize, usize) {
     }
 }
 impl<'a> IntoSourceLoc<'a> for (&'a str, Range<usize>) {
+    #[inline]
     fn into_source_location(self) -> SourceLocation<'a> {
         SourceLocation {
             file_name: self.0,

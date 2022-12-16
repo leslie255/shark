@@ -170,6 +170,7 @@ impl<'src> AstParser<'src> {
                     node = block.traced(loc);
                 }
                 Token::RoundParenOpen => node = self.parse_paren(token_location)?,
+                Token::RectParenOpen => node = self.parse_arr_literal(token_location)?,
                 Token::Return => {
                     let (child, loc) = parse!(mono_op, precedence = 15);
                     node = AstNode::Return(child).traced(loc);
@@ -661,6 +662,54 @@ impl<'src> AstParser<'src> {
         Some((args, close_paren_loc))
     }
 
+    /// Parse an array literal expression, starting from the token `[`
+    #[must_use]
+    #[inline]
+    fn parse_arr_literal(
+        &mut self,
+        start_loc: SourceLocation<'src>,
+    ) -> Option<Traced<'src, AstNode<'src>>> {
+        let mut arr_elements = Vec::<AstNodeRef<'src>>::new();
+        let mut previous_loc = start_loc;
+        let end_loc = loop {
+            let peek_token = peek_token!(self, start_loc);
+            match peek_token.inner() {
+                &Token::RectParenClose => {
+                    let peek_location = peek_token.src_loc();
+                    self.token_stream.next();
+                    break peek_location;
+                }
+                _ => {
+                    let node = self
+                        .parse_expr(15, false)
+                        .ok_or(ErrorContent::UnexpectedEOF.wrap(previous_loc))
+                        .collect_err(self.err_collector)?;
+                    let node_loc = node.src_loc();
+                    previous_loc = (node_loc.file_name, node_loc.range.1).into_source_location();
+                    let node_ref = self.ast.add_node(node);
+                    arr_elements.push(node_ref);
+                    let peek_token = peek_token!(self, previous_loc);
+                    let peek_location = peek_token.src_loc();
+                    match peek_token.inner() {
+                        Token::Comma => {
+                            self.token_stream.next();
+                        }
+                        Token::RectParenClose => (),
+                        _ => ErrorContent::ExpectMultipleTokens(vec![
+                            Token::Comma,
+                            Token::RectParenClose,
+                        ])
+                        .wrap(peek_location)
+                        .collect_into(self.err_collector),
+                    }
+                }
+            }
+        };
+        let node = AstNode::Array(arr_elements);
+        let node = node.traced((start_loc.file_name, start_loc.range.0, end_loc.range.1));
+        Some(node)
+    }
+
     /// Parse a type expression, starting from the token before that expression
     /// Returns `None` if unexpected EOF, errors handled internally
     #[must_use]
@@ -706,28 +755,55 @@ impl<'src> AstParser<'src> {
                 Some(node)
             }
             Token::RectParenOpen => {
-                let peeked_token = self
-                    .token_stream
-                    .peek()
-                    .ok_or(ErrorContent::UnexpectedEOF.wrap(token_location))
-                    .collect_err(self.err_collector)?;
+                let peeked_token = peek_token!(self, token_location);
                 let peeked_location = peeked_token.src_loc();
-                match peeked_token.inner() {
-                    Token::RectParenClose => {
-                        self.token_stream.next();
-                    }
-                    _ => {
+
+                // If the next token is `]`, it's a slice, if it's an number then it's an array
+                // But first make a macro to report a no closing rect paren error because it will
+                // be used twice
+                macro_rules! no_closing_paren_err {
+                    ($loc: expr) => {
                         ErrorContent::SliceNoClosingParen
-                            .wrap((self.path, peeked_location.range.0))
+                            .wrap($loc)
                             .collect_into(self.err_collector);
                         err_handler(&mut self.token_stream);
-                        return Some(TypeExprNode::None.wrap());
-                    }
+                    };
                 }
-                let mut node =
-                    self.parse_type_expr(recursive_counter + 1, current_loc, err_handler)?;
-                node.pool.push(TypeExprNode::Slice(node.root));
-                node.root = node.pool.len() - 1;
+                let node = match peeked_token.inner() {
+                    Token::RectParenClose => {
+                        self.token_stream.next();
+                        let mut node =
+                            self.parse_type_expr(recursive_counter + 1, current_loc, err_handler)?;
+                        node.pool.push(TypeExprNode::Slice(node.root));
+                        node
+                    }
+                    Token::Number(numval) => {
+                        let arr_len = numval
+                            .as_unsigned()
+                            .ok_or(ErrorContent::NonUIntForArrLen.wrap(peeked_location))
+                            .collect_err(self.err_collector)
+                            .unwrap_or_default();
+                        self.token_stream.next();
+                        let peeked_token = peek_token!(self, token_location);
+                        let peeked_location = peeked_token.src_loc();
+                        if let Token::RectParenClose = peeked_token.inner() {
+                            self.token_stream.next();
+                        } else {
+                            no_closing_paren_err!((self.path, peeked_location.range.0));
+                        }
+                        let mut node =
+                            self.parse_type_expr(recursive_counter + 1, current_loc, err_handler)?;
+                        node.pool.push(TypeExprNode::Array(arr_len, node.root));
+                        node
+                    }
+                    _ => {
+                        no_closing_paren_err!((self.path, peeked_location.range.0));
+                        let mut node =
+                            self.parse_type_expr(recursive_counter + 1, current_loc, err_handler)?;
+                        node.pool.push(TypeExprNode::Slice(node.root));
+                        node
+                    }
+                };
                 Some(node)
             }
             _ => {
