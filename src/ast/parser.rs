@@ -12,7 +12,7 @@ use crate::{
 
 use super::{
     type_expr::{TypeExpr, TypeExprNode},
-    Ast, AstNode, AstNodeRef, FnDef, MathOpKind,
+    Ast, AstNode, AstNodeRef, FnDef, IfExpr, MathOpKind,
 };
 
 /// Owns a `TokenStream` and parses it into AST incrementally
@@ -165,6 +165,7 @@ impl<'src> AstParser<'src> {
                 Token::Let => node = self.parse_let(token_location)?,
                 Token::Fn => node = self.parse_fn_def(token_location)?,
                 Token::Loop => node = self.parse_loop(token_location)?,
+                Token::If => node = self.parse_if(token_location)?,
                 Token::BraceOpen => {
                     let (loc, children) = self.parse_block(token_location)?;
                     let block = AstNode::Block(children);
@@ -603,10 +604,14 @@ impl<'src> AstParser<'src> {
         let peek_token = peek_token!(self, start_loc);
         let peek_location = peek_token.src_loc();
         match peek_token.inner() {
-            &Token::BraceOpen =>{
+            &Token::BraceOpen => {
                 self.token_stream.next();
                 let (end_loc, body) = self.parse_block(peek_location)?;
-                let node = AstNode::Loop(body).traced((start_loc.file_name, start_loc.range.0, end_loc.range.1));
+                let node = AstNode::Loop(body).traced((
+                    start_loc.file_name,
+                    start_loc.range.0,
+                    end_loc.range.1,
+                ));
                 Some(node)
             }
             _ => {
@@ -739,6 +744,92 @@ impl<'src> AstParser<'src> {
             }
         }
         Some((args, close_paren_loc))
+    }
+
+    /// Parse an if expression, starting from the token `if`
+    #[must_use]
+    #[inline]
+    fn parse_if(&mut self, start_loc: SourceLocation<'src>) -> Option<Traced<'src, AstNode<'src>>> {
+        let mut if_blocks = Vec::<(AstNodeRef<'src>, Vec<AstNodeRef<'src>>)>::new();
+        let mut else_block = Option::<Vec<AstNodeRef<'src>>>::None;
+        let mut end_loc: SourceLocation<'src>;
+        macro_rules! no_brace_err {
+            ($loc:expr) => {
+                ErrorContent::ExpectToken(Token::BraceOpen)
+                    .wrap($loc)
+                    .collect_into(self.err_collector);
+                let if_expr = IfExpr {
+                    if_blocks,
+                    else_block,
+                };
+                return Some(AstNode::If(if_expr).traced((
+                    start_loc.file_name,
+                    start_loc.range.0,
+                    $loc.range.1,
+                )));
+            };
+        }
+        macro_rules! parse_if_condition_and_block {
+            () => {
+                let if_condition = self
+                    .parse_expr(15, false)
+                    .ok_or(ErrorContent::UnexpectedEOF.wrap(start_loc))
+                    .collect_err(self.err_collector)?;
+                let if_condition = self.ast.add_node(if_condition);
+                let peeked_token = peek_token!(self, start_loc);
+                let peeked_location = peeked_token.src_loc();
+                match peeked_token.inner() {
+                    Token::BraceOpen => {
+                        self.token_stream.next();
+                        let (block_end_loc, body) = self.parse_block(peeked_location)?;
+                        if_blocks.push((if_condition, body));
+                        end_loc = block_end_loc;
+                    }
+                    _ => {
+                        no_brace_err!(peeked_location);
+                    }
+                }
+            };
+        }
+
+        // parse the first if block
+        parse_if_condition_and_block!();
+
+        // parse the rest of the `else if` blocks and `else block`
+        loop {
+            let peeked_token = peek_token!(self, start_loc);
+            match peeked_token.inner() {
+                Token::Else => {
+                    self.token_stream.next();
+                    let peeked_token = peek_token!(self, start_loc);
+                    let peeked_location = peeked_token.src_loc();
+                    match peeked_token.inner() {
+                        Token::If => {
+                            self.token_stream.next();
+                            parse_if_condition_and_block!();
+                        }
+                        Token::BraceOpen => {
+                            self.token_stream.next();
+                            let (block_end_loc, body) = self.parse_block(peeked_location)?;
+                            else_block = Some(body);
+                            end_loc = block_end_loc;
+                            break;
+                        }
+                        _ => {
+                            no_brace_err!(peeked_location);
+                        }
+                    }
+                }
+                _ => break,
+            }
+        }
+        let if_expr = IfExpr {
+            if_blocks,
+            else_block,
+        };
+        let node =
+            AstNode::If(if_expr).traced((start_loc.file_name, start_loc.range.0, end_loc.range.1));
+        Some(node)
     }
 
     /// Parse an array literal expression, starting from the token `[`

@@ -1,6 +1,12 @@
 fn main() -> i32 {
-    loop {
-        "lol";
+    if true {
+        1;
+    } else if true {
+        2;
+    } else if true {
+        4;
+    } else {
+        5;
     }
     return 0;
 }
