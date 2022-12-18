@@ -1,5 +1,7 @@
 use std::iter::Peekable;
 
+mod type_parser;
+
 use crate::{
     ast::{BitOpKind, BoolOpKind, CmpKind},
     buffered_content::BufferedContent,
@@ -371,7 +373,8 @@ impl<'src> AstParser<'src> {
                     let token_loc = self.token_stream.next()?.src_loc();
                     let node_loc = node.src_loc();
                     let node_ref = self.ast.add_node(node);
-                    let dtype = self.parse_type_expr(0, token_loc, |_| {})?;
+                    let dtype = type_parser::parse_type_expr(self, token_loc)
+                        .collect_err(self.err_collector)?;
                     node = AstNode::Typecast(node_ref, dtype).traced((
                         node_loc.file_name,
                         node_loc.range.0,
@@ -446,9 +449,8 @@ impl<'src> AstParser<'src> {
         let var_type = match peeked_token.inner() {
             Token::Colon => {
                 self.token_stream.next();
-                let type_expr = self.parse_type_expr(0, peeked_location, |token_stream| {
-                    skip_to_expr_end!(token_stream)
-                })?;
+                let type_expr = type_parser::parse_type_expr(self, peeked_location)
+                    .collect_err(self.err_collector)?;
                 peeked_token = peek_token!(self, peeked_location);
                 peeked_location = peeked_token.src_loc();
                 Some(type_expr)
@@ -712,9 +714,8 @@ impl<'src> AstParser<'src> {
             &Token::Arrow => {
                 self.token_stream.next();
                 end_loc = peeked_location.range.1;
-                self.parse_type_expr(0, peeked_location, |token_stream| {
-                    skip_to_expr_end!(token_stream)
-                })?
+                type_parser::parse_type_expr(self, peeked_location)
+                    .collect_err(self.err_collector)?
             }
             &Token::BraceOpen | &Token::Semicolon | &Token::Comma => TypeExprNode::None.wrap(),
             _ => todo!("error"),
@@ -790,9 +791,8 @@ impl<'src> AstParser<'src> {
                     todo!("error")
                 }
             }
-            let arg_type = self.parse_type_expr(0, token_location, {
-                |token_stream| skip_to_expr_end!(token_stream)
-            })?;
+            let arg_type = type_parser::parse_type_expr(self, token_location)
+                .collect_err(self.err_collector)?;
             args.push((arg_name, arg_type));
 
             let peeked_token = peek_token!(self, start_loc);

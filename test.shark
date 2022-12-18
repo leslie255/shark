@@ -1,6 +1,8 @@
 fn main() -> i32 {
-    (0, 1, 2);
-    ();
+    let fp: &fn(u8);
+    let fp: &fn() -> usize;
+    let fp: &fn(u8) -> usize;
+    let fp: &fn(u8, bool) -> usize;
     return 0;
 }
 

@@ -6,8 +6,8 @@ pub struct TypeExpr<'a> {
     pub root: usize,
 }
 impl<'a> TypeExpr<'a> {
-    fn root(&self) -> TypeExprNode {
-        self.pool[self.root]
+    fn root(&self) -> &TypeExprNode<'a> {
+        &self.pool[self.root]
     }
 }
 impl<'a> Debug for TypeExpr<'a> {
@@ -16,7 +16,7 @@ impl<'a> Debug for TypeExpr<'a> {
     }
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 pub enum TypeExprNode<'a> {
     USize,
     ISize,
@@ -28,6 +28,8 @@ pub enum TypeExprNode<'a> {
     I32,
     I16,
     I8,
+    F64,
+    F32,
     Char32,
     Char8,
     Bool,
@@ -39,11 +41,15 @@ pub enum TypeExprNode<'a> {
     Slice(usize),
     /// length, child node
     Array(u64, usize),
+    Tuple(Vec<usize>),
+
+    /// arg types, ret type
+    Fn(Vec<usize>, usize),
 
     TypeName(&'a str),
 }
 impl<'a> TypeExprNode<'a> {
-    fn fmt(self, pool: &Vec<TypeExprNode<'_>>, f: &mut Formatter<'_>) -> std::fmt::Result {
+    fn fmt(&self, pool: &Vec<TypeExprNode<'_>>, f: &mut Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::USize => write!(f, "usize")?,
             Self::ISize => write!(f, "isize")?,
@@ -55,25 +61,91 @@ impl<'a> TypeExprNode<'a> {
             Self::I32 => write!(f, "i32")?,
             Self::I16 => write!(f, "i16")?,
             Self::I8 => write!(f, "i8")?,
+            Self::F64 => write!(f, "f64")?,
+            Self::F32 => write!(f, "f32")?,
             Self::Char32 => write!(f, "char32")?,
             Self::Char8 => write!(f, "char8")?,
             Self::Bool => write!(f, "bool")?,
             Self::None => write!(f, "none")?,
             Self::Ptr(child_i) => {
                 write!(f, "*")?;
-                pool[child_i].fmt(pool, f)?;
+                pool[*child_i].fmt(pool, f)?;
             }
             Self::Ref(child_i) => {
                 write!(f, "&")?;
-                pool[child_i].fmt(pool, f)?;
+                pool[*child_i].fmt(pool, f)?;
             }
             Self::Slice(child_i) => {
                 write!(f, "[]")?;
-                pool[child_i].fmt(pool, f)?;
+                pool[*child_i].fmt(pool, f)?;
             }
             Self::Array(len, child_i) => {
                 write!(f, "[{}]", len)?;
-                pool[child_i].fmt(pool, f)?;
+                pool[*child_i].fmt(pool, f)?;
+            }
+            Self::Tuple(children) => {
+                write!(f, "(")?;
+                let child_count = children.len();
+                match child_count {
+                    0 => (),
+                    1 => {
+                        let node = &pool[children[0]];
+                        node.fmt(pool, f)?;
+                    }
+                    _ => {
+                        if f.alternate() {
+                            for node in children[0..child_count - 1].iter() {
+                                let node = &pool[*node];
+                                node.fmt(pool, f)?;
+                                write!(f, ", ")?;
+                            }
+                        } else {
+                            for node in children[0..child_count - 1].iter() {
+                                let node = &pool[*node];
+                                node.fmt(pool, f)?;
+                                write!(f, ",")?;
+                            }
+                        }
+                        let &last_i = unsafe { children.last().unwrap_unchecked() };
+                        pool[last_i].fmt(pool, f)?;
+                    }
+                }
+                write!(f, ")")?;
+            }
+            Self::Fn(arg_types, ret_type) => {
+                write!(f, "fn(")?;
+                let arg_count = arg_types.len();
+                match arg_count {
+                    0 => (),
+                    1 => {
+                        let node = &pool[arg_types[0]];
+                        node.fmt(pool, f)?;
+                    }
+                    _ => {
+                        if f.alternate() {
+                            for arg in arg_types[0..arg_count - 1].iter() {
+                                let node = &pool[*arg];
+                                node.fmt(pool, f)?;
+                                write!(f, ", ")?;
+                            }
+                        } else {
+                            for arg in arg_types[0..arg_count - 1].iter() {
+                                let node = &pool[*arg];
+                                node.fmt(pool, f)?;
+                                write!(f, ",")?;
+                            }
+                        }
+                        let &last_i = unsafe { arg_types.last().unwrap_unchecked() };
+                        pool[last_i].fmt(pool, f)?;
+                    }
+                }
+                write!(f, ")")?;
+                if f.alternate() {
+                    write!(f, "->")?;
+                } else {
+                    write!(f, " -> ")?;
+                }
+                pool[*ret_type].fmt(pool, f)?;
             }
             Self::TypeName(name) => Display::fmt(&name.escape_default(), f)?,
         }
