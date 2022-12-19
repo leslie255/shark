@@ -719,7 +719,13 @@ impl<'src> AstParser<'src> {
     }
 
     /// Parse an `fn` expression, starting from the token `fn`
-    /// Returns `None` if unexpected EOF, errors handled internally
+    /// # Parameters
+    ///
+    /// - `start_loc`: The source location of the token `fn`
+    ///
+    /// # Returns
+    ///
+    /// The parsed `fn` expression, or `None` if an error occurred
     #[must_use]
     #[inline]
     fn parse_fn_def(
@@ -766,14 +772,13 @@ impl<'src> AstParser<'src> {
     }
 
     /// Parse arguments in a function definition, starting from the token `(`
-    /// # Arguments
+    /// # Parameters
     ///
     /// * `start_loc` - The location of the `(` token
     ///
     /// # Returns
     ///
-    /// A tuple of the arguments and the location of the `)` token
-    ///
+    /// A tuple of the arguments and the location of the `)` token, or `None` if an error occurs
     #[must_use]
     #[inline]
     fn parse_fn_def_args(
@@ -941,7 +946,7 @@ impl<'src> AstParser<'src> {
     ///
     /// # Returns
     ///
-    /// An `AstNode` representing the array literal expression, or `None` if an error occurred
+    /// An `AstNode::ArrLiteral` node, or `None` if an error occurred
     #[must_use]
     #[inline]
     fn parse_arr_literal(
@@ -994,7 +999,13 @@ impl<'src> AstParser<'src> {
     /// Returns `None` if an EOF error is encountered (errors collected internally)
     ///
     /// # Parameters
+    ///
     /// - `start_loc`: The source location of the `struct` token
+    ///
+    /// # Returns
+    ///
+    /// - `Some((StructOrUnionDef, SourceLocation))`: The parsed struct or union definition and its source location
+    /// - `None`: If an EOF error is encountered
     #[must_use]
     #[inline]
     fn parse_struct_or_union(
@@ -1066,6 +1077,15 @@ impl<'src> AstParser<'src> {
         Some((info, pos))
     }
 
+    /// Parse a typedef statement, starting from the token `typedef`.
+    /// # Parameters
+    ///
+    /// - `start_loc`: The source location of the `typedef` keyword.
+    ///
+    /// # Returns
+    ///
+    /// - `Some(node)`: The parsed typedef statement.
+    /// - `None`: The statement is not a typedef statement.
     #[must_use]
     #[inline]
     fn parse_typedef(
