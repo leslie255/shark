@@ -4,3 +4,9 @@ struct Person {
     gender: u8,
     age: u8,
 }
+
+fn main() -> i32 {
+    let perosn: Person;
+    person.name.size;
+    return 0;
+}

@@ -1,7 +1,10 @@
 pub mod parser;
 pub mod type_expr;
 
-use std::{fmt::Debug, ops::Deref};
+use std::{
+    fmt::{Debug, Write},
+    ops::Deref,
+};
 
 use crate::{
     error::location::{IntoSourceLoc, Traced},
@@ -53,16 +56,20 @@ pub enum AstNode<'src> {
     Array(Vec<AstNodeRef<'src>>),
 
     // --- Operators
+    // -- Binary operators
     MathOp(MathOpKind, AstNodeRef<'src>, AstNodeRef<'src>),
+    BitOp(BitOpKind, AstNodeRef<'src>, AstNodeRef<'src>),
+    BoolOp(BoolOpKind, AstNodeRef<'src>, AstNodeRef<'src>),
+    Cmp(CmpKind, AstNodeRef<'src>, AstNodeRef<'src>),
+    MemberAccess(AstNodeRef<'src>, AstNodeRef<'src>),
+
+    // -- Singular operators
+    BitNot(AstNodeRef<'src>),
+    BoolNot(AstNodeRef<'src>),
     /// used when a minus sign is in front of a number, such as `-255`
     MinusNum(AstNodeRef<'src>),
     /// used when a plus sign is in front of a number, such as `+255`
     PlusNum(AstNodeRef<'src>),
-    BitOp(BitOpKind, AstNodeRef<'src>, AstNodeRef<'src>),
-    BoolOp(BoolOpKind, AstNodeRef<'src>, AstNodeRef<'src>),
-    Cmp(CmpKind, AstNodeRef<'src>, AstNodeRef<'src>),
-    BitNot(AstNodeRef<'src>),
-    BoolNot(AstNodeRef<'src>),
 
     Call(AstNodeRef<'src>, Vec<AstNodeRef<'src>>),
 
@@ -203,10 +210,21 @@ pub struct IfExpr<'a> {
     pub else_block: Option<Vec<AstNodeRef<'a>>>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct StructDef<'a> {
     pub name: &'a str,
     pub fields: Vec<(&'a str, TypeExpr<'a>)>,
+}
+
+impl Debug for StructDef<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.name)?;
+        f.write_char(' ')?;
+        f.debug_map()
+            .entries(self.fields.iter().map(|&(ref k, ref v)| (k, v)))
+            .finish()?;
+        Ok(())
+    }
 }
 
 /// Type of an arithmatic operations

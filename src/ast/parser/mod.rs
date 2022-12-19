@@ -223,6 +223,11 @@ impl<'src> AstParser<'src> {
                 None => break,
             };
             match peek.inner() {
+                Token::Dot => {
+                    let (l, r, pos) = parse!(binary_op, precedence > 1; else: break);
+                    node = AstNode::MemberAccess(l, r).traced(pos);
+                    continue;
+                }
                 Token::Mul => {
                     let (l, r, pos) = parse!(binary_op, precedence > 3; else: break);
                     node = AstNode::MathOp(MathOpKind::Mul, l, r).traced(pos);
