@@ -6,6 +6,8 @@ use crate::{
 
 use super::AstParser;
 
+const TYPE_PARSER_RECURSIVE_LIMIT: usize = 256;
+
 /// Parse a type expression, starting from the token before that expression
 /// Returns `None` if unexpected EOF, errors handled internally
 #[inline]
@@ -30,6 +32,9 @@ fn parse_type_expr_node<'src>(
     recursive_counter: usize,
     type_expr: &mut TypeExpr<'src>,
 ) -> Result<usize, Error<'src>> {
+    if recursive_counter >= TYPE_PARSER_RECURSIVE_LIMIT {
+        return Err(ErrorContent::TypeExprStackOverflow.wrap(current_loc));
+    }
     let next_token = parser
         .token_stream
         .next()
@@ -53,11 +58,13 @@ fn parse_type_expr_node<'src>(
         Token::Identifier("bool") => TypeExprNode::Bool,
         Token::Identifier(typename) => TypeExprNode::TypeName(typename),
         Token::AndOp => {
-            let child_i = parse_type_expr_node(parser, current_loc, recursive_counter, type_expr)?;
+            let child_i =
+                parse_type_expr_node(parser, current_loc, recursive_counter + 1, type_expr)?;
             TypeExprNode::Ref(child_i)
         }
         Token::Mul => {
-            let child_i = parse_type_expr_node(parser, current_loc, recursive_counter, type_expr)?;
+            let child_i =
+                parse_type_expr_node(parser, current_loc, recursive_counter + 1, type_expr)?;
             TypeExprNode::Ptr(child_i)
         }
         Token::RectParenOpen => {

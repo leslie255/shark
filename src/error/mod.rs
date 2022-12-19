@@ -43,6 +43,7 @@ pub enum ErrorContent<'src> {
     ExpectToken(Token<'src>),
     ExpectMultipleTokens(Vec<Token<'src>>),
     NonUIntForArrLen,
+    TypeExprStackOverflow,
 }
 impl<'src> ErrorContent<'src> {
     #[must_use]
@@ -77,6 +78,7 @@ impl<'src> ErrorContent<'src> {
             Self::ExpectToken(_) => "expect token",
             Self::ExpectMultipleTokens(_) => "expect tokens",
             Self::NonUIntForArrLen => "expect unsigned integer for array",
+            Self::TypeExprStackOverflow => "type expression exceeds recursive limit (256)",
         }
     }
     fn description(&self) -> String {
@@ -117,6 +119,7 @@ impl<'src> ErrorContent<'src> {
             // TODO: pretty format this
             Self::ExpectMultipleTokens(tokens) => format!("Expect tokens: {:?}", tokens),
             Self::NonUIntForArrLen => "Array length should be an unsigned integer".to_string(),
+            Self::TypeExprStackOverflow => "Type expression exceeds stack limit".to_string(),
         }
     }
 }

@@ -1105,10 +1105,8 @@ impl<'src> AstParser<'src> {
         &mut self,
         start_loc: SourceLocation<'src>,
     ) -> Option<Traced<'src, AstNode<'src>>> {
-        let (name_loc, name) =
-            expect_identifier!(self, start_loc, otherwise: return None);
-        let braceopen_loc =
-            expect_token!(self, name_loc, Token::BraceOpen, otherwise: return None);
+        let (name_loc, name) = expect_identifier!(self, start_loc, otherwise: return None);
+        let braceopen_loc = expect_token!(self, name_loc, Token::BraceOpen, otherwise: return None);
         let mut previous_loc = braceopen_loc;
         let mut cases = Vec::<&'src str>::new();
         let end_loc = loop {
@@ -1140,10 +1138,7 @@ impl<'src> AstParser<'src> {
             }
             previous_loc = peeked_location;
         };
-        let enum_def = EnumDef {
-            name,
-            cases,
-        };
+        let enum_def = EnumDef { name, cases };
         let node = AstNode::EnumDef(enum_def);
         Some(node.traced((start_loc.file_name, start_loc.range.0, end_loc.range.1)))
     }
