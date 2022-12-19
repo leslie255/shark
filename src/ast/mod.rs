@@ -16,7 +16,7 @@ use type_expr::TypeExpr;
 /// Uses `AstNodeRef` for inter-reference between nodes
 #[derive(Debug, Clone, Default)]
 pub struct Ast<'src> {
-    node_pool: Vec<Traced<'src, AstNode<'src>>>,
+    node_pool: Box<Vec<Traced<'src, AstNode<'src>>>>,
     pub str_pool: Vec<String>,
     pub root_nodes: Vec<Traced<'src, AstNodeRef<'src>>>,
 }
@@ -29,7 +29,7 @@ impl<'src> Ast<'src> {
         self.node_pool.push(new_node);
         let i = self.node_pool.len() - 1;
         let node_ref = AstNodeRef {
-            pool: &self.node_pool as *const Vec<Traced<'src, AstNode<'src>>>,
+            pool: self.node_pool.deref() as *const Vec<Traced<'src, AstNode<'src>>>,
             i,
         };
         node_ref

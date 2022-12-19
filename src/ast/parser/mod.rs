@@ -670,7 +670,6 @@ impl<'src> AstParser<'src> {
     }
 
     /// Parse a `loop` expression, starting from the token `loop`
-    /// Returns `None` if unexpected EOF, errors handled internally
     #[must_use]
     #[inline]
     fn parse_loop(
@@ -750,8 +749,14 @@ impl<'src> AstParser<'src> {
     }
 
     /// Parse arguments in a function definition, starting from the token `(`
-    /// Returns the arguments, and where the call ended
-    /// Returns `None` if unexpected EOF, errors handled internally
+    /// # Arguments
+    ///
+    /// * `start_loc` - The location of the `(` token
+    ///
+    /// # Returns
+    ///
+    /// A tuple of the arguments and the location of the `)` token
+    ///
     #[must_use]
     #[inline]
     fn parse_fn_def_args(
@@ -821,6 +826,13 @@ impl<'src> AstParser<'src> {
     }
 
     /// Parse an if expression, starting from the token `if`
+    /// # Arguments
+    ///
+    /// * `start_loc`: The source location of the token `if`
+    ///
+    /// # Return
+    ///
+    /// The `AstNode` of the if expression, or `None` if an error occurred.
     #[must_use]
     #[inline]
     fn parse_if(&mut self, start_loc: SourceLocation<'src>) -> Option<Traced<'src, AstNode<'src>>> {
@@ -907,6 +919,13 @@ impl<'src> AstParser<'src> {
     }
 
     /// Parse an array literal expression, starting from the token `[`
+    /// # Parameters
+    ///
+    /// * `start_loc` - The source location of the `[` token
+    ///
+    /// # Returns
+    ///
+    /// An `AstNode` representing the array literal expression, or `None` if an error occurred
     #[must_use]
     #[inline]
     fn parse_arr_literal(
