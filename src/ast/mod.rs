@@ -100,6 +100,7 @@ pub enum AstNode<'src> {
     TypeDef(&'src str, TypeExpr<'src>),
     StructDef(StructOrUnionDef<'src>),
     UnionDef(StructOrUnionDef<'src>),
+    EnumDef(EnumDef<'src>),
 
     Tuple(Vec<Traced<'src, AstNode<'src>>>),
 }
@@ -123,7 +124,8 @@ impl<'src> AstNode<'src> {
             | &AstNode::If(_)
             | &AstNode::Loop(_)
             | &AstNode::StructDef(_)
-            | &AstNode::UnionDef(_) => true,
+            | &AstNode::UnionDef(_)
+            | &AstNode::EnumDef(_) => true,
             _ => false,
         }
     }
@@ -247,6 +249,24 @@ impl Debug for StructOrUnionDef<'_> {
         f.write_char(' ')?;
         f.debug_map()
             .entries(self.fields.iter().map(|&(ref k, ref v)| (k, v)))
+            .finish()?;
+        Ok(())
+    }
+}
+
+/// Definition information of an enum
+#[derive(Clone)]
+pub struct EnumDef<'a> {
+    pub name: &'a str,
+    pub cases: Vec<&'a str>,
+}
+
+impl Debug for EnumDef<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.name)?;
+        f.write_char(' ')?;
+        f.debug_set()
+            .entries(self.cases.iter().map(|v| (v)))
             .finish()?;
         Ok(())
     }

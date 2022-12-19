@@ -1,14 +1,6 @@
-union Id64 {
-    unsigned: u64,
-    signed: u64,
-    ne_bytes: [8]u8,
+enum Season {
+    spring,
+    summer,
+    autumn,
+    winter,
 }
-
-struct Person {
-    id: Id64,
-    name: []u8,
-    gender: u8,
-    age: u8,
-}
-
-typedef Id = Id64;

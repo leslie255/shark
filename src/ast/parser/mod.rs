@@ -16,7 +16,7 @@ use self::type_parser::parse_type_expr;
 
 use super::{
     type_expr::{TypeExpr, TypeExprNode},
-    Ast, AstNode, AstNodeRef, FnDef, IfExpr, MathOpKind, StructOrUnionDef,
+    Ast, AstNode, AstNodeRef, EnumDef, FnDef, IfExpr, MathOpKind, StructOrUnionDef,
 };
 
 /// Owns a `TokenStream` and parses it into AST incrementally
@@ -84,6 +84,23 @@ macro_rules! skip_to_expr_end {
     };
 }
 
+/// Expect the next token to fit a pattern, otherwise collect an `ExpectToken` error and call `otherwise`.
+///
+/// The location of the expected token is returned.
+///
+/// # Parameters
+/// - `$self`: The parser.
+/// - `$loc`: The location of the previous token.
+/// - `$expected`: Pattern of the expected token.
+/// - `$err_handler`: The error handler.
+///
+/// # Exampls
+///
+/// ```
+/// let loc = expect_token!(self, loc, Token::Colon, otherwise: return None);
+/// ```
+///
+#[macro_export]
 macro_rules! expect_token {
     ($self:expr, $loc:expr, $expected:pat, otherwise: $err_handler:expr) => {{
         let peeked_token = peek_token!($self, $loc);
@@ -100,7 +117,70 @@ macro_rules! expect_token {
     }};
 }
 
+/// Expect the next token to be an identifier, otherwise collect an `ExpectToken` error and call `otherwise`.
+///
+/// The location of the token and the identifier string is returned
+///
+/// # Parameters
+/// - `$self`: The parser.
+/// - `$loc`: The location of the previous token.
+/// - `$err_handler`: The error handler.
+///
+/// # Exampls
+///
+/// ```
+/// let (loc, id) = expect_token!(self, loc, otherwise: return None);
+/// ```
+///
+#[macro_export]
+macro_rules! expect_identifier {
+    ($self:expr, $loc:expr, otherwise: $err_handler:expr) => {{
+        let peeked_token = peek_token!($self, $loc);
+        let peeked_location = peeked_token.src_loc();
+        let result = peeked_token
+            .expect_identifier()
+            .ok_or(ErrorContent::ExpectToken(Token::Identifier("")).wrap(peeked_location))
+            .collect_err($self.err_collector);
+        match result {
+            Some(id) => {
+                $self.token_stream.next();
+                (peeked_location, id)
+            }
+            None => $err_handler,
+        }
+    }};
+}
+
 impl<'src> AstParser<'src> {
+    /// Create a new parser.
+    ///
+    /// # Parameters
+    ///
+    /// - `path`: The path of the source file.
+    /// - `buffers`: The content of the source file.
+    /// - `err_collector`: The error collector.
+    ///
+    /// Note: `BufferedContent` and `ErrorCollector` both uses internal mutability so there is no
+    /// need for `&mut` borrow
+    ///
+    /// # Returns
+    ///
+    /// The parser.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use crate::ast::parser::AstParser;
+    /// use crate::buffered_content::BufferedContent;
+    /// use crate::error::ErrorCollector;
+    ///
+    /// let path = "test.shark";
+    /// let buffers = BufferedContent::default();
+    /// let err_collector = ErrorCollector::new(path);
+    /// let parser = AstParser::new(path, &buffers, &err_collector);
+    /// ```
+    #[must_use]
+    #[inline]
     pub fn new(
         path: &'src str,
         buffers: &'src BufferedContent<'src>,
@@ -119,7 +199,19 @@ impl<'src> AstParser<'src> {
     pub fn str_pool(&self) -> &Vec<String> {
         &self.ast.str_pool
     }
-    /// Operator precedence is similar to C, expect:
+
+    /// Parse a expression.
+    ///
+    /// # Parameters
+    ///
+    /// - `precedence`: The precedence of the expression.
+    /// (only used in recursive calls, when calling from outside always use `15`)
+    ///
+    /// - `expects_semicolon`: Whether the expression should be followed by a semicolon.
+    ///
+    /// # Returns
+    /// The parsed expression, or `None` if EOF
+    /// Errors collected internally
     #[must_use]
     fn parse_expr(
         &mut self,
@@ -207,6 +299,7 @@ impl<'src> AstParser<'src> {
                     let (fields, pos) = self.parse_struct_or_union(token_location)?;
                     node = AstNode::UnionDef(fields).traced(pos);
                 }
+                Token::Enum => node = self.parse_enum(token_location)?,
                 Token::AndOp => {
                     let (child, loc) = parse!(mono_op, precedence = 1);
                     node = AstNode::TakeRef(child).traced(loc);
@@ -994,6 +1087,67 @@ impl<'src> AstParser<'src> {
         Some(node)
     }
 
+    /// Parse an enum definition, starting from the token `enum`
+    /// Returns the the node of the `enum` definition expression
+    /// Returns `None` if an EOF error is encountered (errors collected internally)
+    ///
+    /// # Parameters
+    ///
+    /// - `start_loc`: The source location of the `enum` token
+    ///
+    /// # Returns
+    ///
+    /// - `Some(Traced<AstNode>)`: The parsed enum definition and its source location
+    /// - `None`: If an EOF error is encountered
+    #[must_use]
+    #[inline]
+    fn parse_enum(
+        &mut self,
+        start_loc: SourceLocation<'src>,
+    ) -> Option<Traced<'src, AstNode<'src>>> {
+        let (name_loc, name) =
+            expect_identifier!(self, start_loc, otherwise: return None);
+        let braceopen_loc =
+            expect_token!(self, name_loc, Token::BraceOpen, otherwise: return None);
+        let mut previous_loc = braceopen_loc;
+        let mut cases = Vec::<&'src str>::new();
+        let end_loc = loop {
+            let next_token = next_token!(self, previous_loc);
+            let token_loc = next_token.src_loc();
+            let case_name = match next_token.into_inner() {
+                Token::BraceClose => {
+                    break token_loc;
+                }
+                Token::Identifier(field_name) => field_name,
+                _ => {
+                    ErrorContent::ExpectMultipleTokens(vec![
+                        Token::BraceClose,
+                        Token::Identifier(""),
+                    ])
+                    .wrap(token_loc)
+                    .collect_into(self.err_collector);
+                    return None;
+                }
+            };
+            cases.push(case_name);
+            let peeked_token = peek_token!(self, token_loc);
+            let peeked_location = peeked_token.src_loc();
+            match peeked_token.inner() {
+                Token::Comma => {
+                    self.token_stream.next();
+                }
+                _ => (),
+            }
+            previous_loc = peeked_location;
+        };
+        let enum_def = EnumDef {
+            name,
+            cases,
+        };
+        let node = AstNode::EnumDef(enum_def);
+        Some(node.traced((start_loc.file_name, start_loc.range.0, end_loc.range.1)))
+    }
+
     /// Parse a struct or union definition, starting from the token `struct` or `union`
     /// Returns the `StructOrUnionDef` information as well as the `SourceLocation` of the definition
     /// Returns `None` if an EOF error is encountered (errors collected internally)
@@ -1019,19 +1173,11 @@ impl<'src> AstParser<'src> {
             .ok_or(ErrorContent::ExpectToken(Token::Identifier("")).wrap(token_loc))
             .collect_err(self.err_collector)?;
 
-        let peeked_token = peek_token!(self, token_loc);
-        let peeked_location = peeked_token.src_loc();
-        if let &Token::BraceOpen = peeked_token.inner() {
-            self.token_stream.next();
-        } else {
-            ErrorContent::ExpectToken(Token::BraceOpen)
-                .wrap(peeked_location)
-                .collect_into(self.err_collector);
-            return None;
-        }
+        let braceopen_loc =
+            expect_token!(self, token_loc, Token::BraceOpen, otherwise: return None);
 
         let mut fields = Vec::<(&'src str, TypeExpr<'src>)>::new();
-        let mut previous_loc = peeked_location;
+        let mut previous_loc = braceopen_loc;
         let end_loc = loop {
             // get name
             let next_token = next_token!(self, previous_loc);
@@ -1052,14 +1198,13 @@ impl<'src> AstParser<'src> {
                 }
             };
 
-            expect_token!(self, start_loc, Token::Colon, otherwise: return None);
+            let colon_loc = expect_token!(self, start_loc, Token::Colon, otherwise: return None);
 
             // get type
-            let field_type =
-                parse_type_expr(self, peeked_location).collect_err(self.err_collector)?;
+            let field_type = parse_type_expr(self, colon_loc).collect_err(self.err_collector)?;
             fields.push((field_name, field_type));
 
-            let peeked_token = peek_token!(self, peeked_location);
+            let peeked_token = peek_token!(self, colon_loc);
             let peeked_location = peeked_token.src_loc();
             match peeked_token.inner() {
                 Token::Comma => {
