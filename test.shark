@@ -10,3 +10,5 @@ struct Person {
     gender: u8,
     age: u8,
 }
+
+typedef Id = Id64;

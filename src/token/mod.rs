@@ -84,6 +84,7 @@ pub enum Token<'a> {
     Static,
     Struct,
     True,
+    Typedef, // >>=
     Union,
     While,
 
@@ -140,7 +141,7 @@ pub enum Token<'a> {
     GrGr, // >>
 
     LeLeEq, // <<=
-    GrGrEq, // >>=
+    GrGrEq,
 }
 impl<'src> Token<'src> {
     /// Wrap the token into `Traced<Token>`

@@ -97,6 +97,7 @@ pub enum AstNode<'src> {
     Typecast(AstNodeRef<'src>, TypeExpr<'src>),
 
     // type definitions
+    TypeDef(&'src str, TypeExpr<'src>),
     StructDef(StructOrUnionDef<'src>),
     UnionDef(StructOrUnionDef<'src>),
 
