@@ -1,12 +1,12 @@
+union Id64 {
+    unsigned: u64,
+    signed: u64,
+    ne_bytes: [8]u8,
+}
+
 struct Person {
-    id: u64,
+    id: Id64,
     name: []u8,
     gender: u8,
     age: u8,
-}
-
-fn main() -> i32 {
-    let perosn: Person;
-    person.name.size;
-    return 0;
 }

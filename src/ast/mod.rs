@@ -97,14 +97,34 @@ pub enum AstNode<'src> {
     Typecast(AstNodeRef<'src>, TypeExpr<'src>),
 
     // type definitions
-    StructDef(StructDef<'src>),
+    StructDef(StructOrUnionDef<'src>),
+    UnionDef(StructOrUnionDef<'src>),
 
     Tuple(Vec<Traced<'src, AstNode<'src>>>),
 }
 impl<'src> AstNode<'src> {
+    /// Create a `Traced<AstNode> from this `AstNode`
+    ///
+    /// # Safety
+    ///
+    /// `loc` must be a valid source location
     #[inline]
     pub fn traced(self, loc: impl IntoSourceLoc<'src>) -> Traced<'src, Self> {
         Traced::new(self, loc.into_source_location())
+    }
+
+    /// Whether this AST node allows a semicolon to be omitted
+    #[inline]
+    pub fn allow_omit_semicolon(&self) -> bool {
+        match self {
+            &AstNode::Block(_)
+            | &AstNode::FnDef(_)
+            | &AstNode::If(_)
+            | &AstNode::Loop(_)
+            | &AstNode::StructDef(_)
+            | &AstNode::UnionDef(_) => true,
+            _ => false,
+        }
     }
 }
 
@@ -125,6 +145,8 @@ pub struct AstNodeRef<'a> {
 impl<'a> Deref for AstNodeRef<'a> {
     type Target = Traced<'a, AstNode<'a>>;
 
+    /// Dereferences the AstNodeRef to the AstNode it points to
+    #[inline]
     fn deref(&self) -> &Self::Target {
         unsafe { self.pool.as_ref().unwrap().get(self.i).unwrap() }
     }
@@ -167,6 +189,7 @@ impl Debug for FnDef<'_> {
     }
 }
 
+/// Formats the head of a function definition.
 #[inline]
 fn fmt_fn_head<'src>(f: &mut std::fmt::Formatter<'_>, fn_def: &FnDef<'src>) -> std::fmt::Result {
     write!(f, "{}", fn_def.name.escape_default())?;
@@ -210,13 +233,14 @@ pub struct IfExpr<'a> {
     pub else_block: Option<Vec<AstNodeRef<'a>>>,
 }
 
+/// Definition information of a struct or union
 #[derive(Clone)]
-pub struct StructDef<'a> {
+pub struct StructOrUnionDef<'a> {
     pub name: &'a str,
     pub fields: Vec<(&'a str, TypeExpr<'a>)>,
 }
 
-impl Debug for StructDef<'_> {
+impl Debug for StructOrUnionDef<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(self.name)?;
         f.write_char(' ')?;

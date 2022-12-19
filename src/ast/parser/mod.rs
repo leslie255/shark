@@ -14,7 +14,7 @@ use crate::{
 
 use super::{
     type_expr::{TypeExpr, TypeExprNode},
-    Ast, AstNode, AstNodeRef, FnDef, IfExpr, MathOpKind, StructDef,
+    Ast, AstNode, AstNodeRef, FnDef, IfExpr, MathOpKind, StructOrUnionDef,
 };
 
 /// Owns a `TokenStream` and parses it into AST incrementally
@@ -180,7 +180,14 @@ impl<'src> AstParser<'src> {
                 }
                 Token::Break => node = AstNode::Break.traced(token_location),
                 Token::Continue => node = AstNode::Continue.traced(token_location),
-                Token::Struct => node = self.parse_struct(token_location)?,
+                Token::Struct => {
+                    let (fields, pos) = self.parse_struct_or_union(token_location)?;
+                    node = AstNode::StructDef(fields).traced(pos);
+                }
+                Token::Union => {
+                    let (fields, pos) = self.parse_struct_or_union(token_location)?;
+                    node = AstNode::UnionDef(fields).traced(pos);
+                }
                 Token::AndOp => {
                     let (child, loc) = parse!(mono_op, precedence = 1);
                     node = AstNode::TakeRef(child).traced(loc);
@@ -408,34 +415,21 @@ impl<'src> AstParser<'src> {
             (Some(Token::Semicolon), true) => {
                 self.token_stream.next();
             }
-            (Some(_), true) => match node.inner() {
-                &AstNode::Block(_)
-                | &AstNode::FnDef(_)
-                | &AstNode::If(_)
-                | &AstNode::Loop(_)
-                | &AstNode::StructDef(_) => {}
-                _ => {
-                    let loc = node.src_loc().range.1;
-                    ErrorContent::ExpectsSemicolon
-                        .wrap((node.src_loc().file_name, loc))
-                        .collect_into(self.err_collector);
-                }
-            },
+            (Some(_), true) if !node.allow_omit_semicolon() => {
+                let loc = node.src_loc().range.1;
+                ErrorContent::ExpectsSemicolon
+                    .wrap((node.src_loc().file_name, loc))
+                    .collect_into(self.err_collector);
+            }
             (Some(_), false) => {}
-            (None, true) => match node.inner() {
-                &AstNode::Block(_)
-                | &AstNode::FnDef(_)
-                | &AstNode::If(_)
-                | &AstNode::Loop(_)
-                | &AstNode::StructDef(_) => {}
-                _ => {
-                    let loc = node.src_loc().range.1;
-                    ErrorContent::ExpectsSemicolonFoundEOF
-                        .wrap((node.src_loc().file_name, loc))
-                        .collect_into(self.err_collector);
-                }
-            },
+            (None, true) if !node.allow_omit_semicolon() => {
+                let loc = node.src_loc().range.1;
+                ErrorContent::ExpectsSemicolonFoundEOF
+                    .wrap((node.src_loc().file_name, loc))
+                    .collect_into(self.err_collector);
+            }
             (None, false) => (),
+            _ => (),
         }
         Some(node)
     }
@@ -960,13 +954,18 @@ impl<'src> AstParser<'src> {
         Some(node)
     }
 
-    /// Parse a struct definition, starting from the token `struct`
+    /// Parse a struct or union definition, starting from the token `struct` or `union`
+    /// Returns the `StructOrUnionDef` information as well as the `SourceLocation` of the definition
+    /// Returns `None` if an EOF error is encountered (errors collected internally)
+    ///
+    /// # Parameters
+    /// - `start_loc`: The source location of the `struct` token
     #[must_use]
     #[inline]
-    fn parse_struct(
+    fn parse_struct_or_union(
         &mut self,
         start_loc: SourceLocation<'src>,
-    ) -> Option<Traced<'src, AstNode<'src>>> {
+    ) -> Option<(StructOrUnionDef<'src>, SourceLocation<'src>)> {
         let next_token = next_token!(self, start_loc);
         let token_loc = next_token.src_loc();
         let struct_name = next_token
@@ -1034,11 +1033,11 @@ impl<'src> AstParser<'src> {
             }
             previous_loc = peeked_location;
         };
-        let node = AstNode::StructDef(StructDef {
+        let info = StructOrUnionDef {
             name: struct_name,
             fields,
-        })
-        .traced((start_loc.file_name, start_loc.range.0, end_loc.range.1));
-        Some(node)
+        };
+        let pos = (start_loc.file_name, start_loc.range.0, end_loc.range.1).into_source_location();
+        Some((info, pos))
     }
 }
