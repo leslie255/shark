@@ -1,8 +1,6 @@
-fn main() -> i32 {
-    let fp: &fn(u8);
-    let fp: &fn() -> usize;
-    let fp: &fn(u8) -> usize;
-    let fp: &fn(u8, bool) -> usize;
-    return 0;
+struct Person {
+    id: u64,
+    name: []u8,
+    gender: u8,
+    age: u8,
 }
-

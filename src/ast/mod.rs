@@ -89,6 +89,9 @@ pub enum AstNode<'src> {
 
     Typecast(AstNodeRef<'src>, TypeExpr<'src>),
 
+    // type definitions
+    StructDef(StructDef<'src>),
+
     Tuple(Vec<Traced<'src, AstNode<'src>>>),
 }
 impl<'src> AstNode<'src> {
@@ -198,6 +201,12 @@ pub struct IfExpr<'a> {
     /// `if` and `else if` blocks are treated the same
     pub if_blocks: Vec<(AstNodeRef<'a>, Vec<AstNodeRef<'a>>)>,
     pub else_block: Option<Vec<AstNodeRef<'a>>>,
+}
+
+#[derive(Debug, Clone)]
+pub struct StructDef<'a> {
+    pub name: &'a str,
+    pub fields: Vec<(&'a str, TypeExpr<'a>)>,
 }
 
 /// Type of an arithmatic operations

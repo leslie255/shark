@@ -34,8 +34,6 @@ pub enum TypeExprNode<'a> {
     Char8,
     Bool,
 
-    None,
-
     Ptr(usize),
     Ref(usize),
     Slice(usize),
@@ -49,6 +47,14 @@ pub enum TypeExprNode<'a> {
     TypeName(&'a str),
 }
 impl<'a> TypeExprNode<'a> {
+
+    /// A shorthand for creating the `()` empty tuple type
+    #[inline]
+    #[must_use]
+    pub const fn void() -> Self {
+        Self::Tuple(Vec::new())
+    }
+
     fn fmt(&self, pool: &Vec<TypeExprNode<'_>>, f: &mut Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::USize => write!(f, "usize")?,
@@ -66,7 +72,6 @@ impl<'a> TypeExprNode<'a> {
             Self::Char32 => write!(f, "char32")?,
             Self::Char8 => write!(f, "char8")?,
             Self::Bool => write!(f, "bool")?,
-            Self::None => write!(f, "none")?,
             Self::Ptr(child_i) => {
                 write!(f, "*")?;
                 pool[*child_i].fmt(pool, f)?;

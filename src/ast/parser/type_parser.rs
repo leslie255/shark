@@ -51,7 +51,6 @@ fn parse_type_expr_node<'src>(
         Token::Identifier("char32") => TypeExprNode::Char32,
         Token::Identifier("char8") => TypeExprNode::Char8,
         Token::Identifier("bool") => TypeExprNode::Bool,
-        Token::Identifier("none") => TypeExprNode::None,
         Token::Identifier(typename) => TypeExprNode::TypeName(typename),
         Token::AndOp => {
             let child_i = parse_type_expr_node(parser, current_loc, recursive_counter, type_expr)?;
@@ -204,16 +203,13 @@ fn parse_type_expr_node<'src>(
                         parse_type_expr_node(parser, current_loc, recursive_counter + 1, type_expr)?
                     }
                     _ => {
-                        type_expr.pool.push(TypeExprNode::None);
+                        type_expr.pool.push(TypeExprNode::void());
                         type_expr.pool.len() - 1
                     }
                 }
             };
             TypeExprNode::Fn(args, ret_type)
         }
-        Token::Struct => todo!(),
-        Token::Union => todo!(),
-        Token::Enum => todo!(),
         _ => {
             return Err(ErrorContent::InvalidTypeExpr.wrap(token_location));
         }

@@ -14,7 +14,7 @@ use crate::{
 
 use super::{
     type_expr::{TypeExpr, TypeExprNode},
-    Ast, AstNode, AstNodeRef, FnDef, IfExpr, MathOpKind,
+    Ast, AstNode, AstNodeRef, FnDef, IfExpr, MathOpKind, StructDef,
 };
 
 /// Owns a `TokenStream` and parses it into AST incrementally
@@ -180,6 +180,7 @@ impl<'src> AstParser<'src> {
                 }
                 Token::Break => node = AstNode::Break.traced(token_location),
                 Token::Continue => node = AstNode::Continue.traced(token_location),
+                Token::Struct => node = self.parse_struct(token_location)?,
                 Token::AndOp => {
                     let (child, loc) = parse!(mono_op, precedence = 1);
                     node = AstNode::TakeRef(child).traced(loc);
@@ -403,7 +404,11 @@ impl<'src> AstParser<'src> {
                 self.token_stream.next();
             }
             (Some(_), true) => match node.inner() {
-                &AstNode::Block(_) | &AstNode::FnDef(_) | &AstNode::If(_) | &AstNode::Loop(_) => {}
+                &AstNode::Block(_)
+                | &AstNode::FnDef(_)
+                | &AstNode::If(_)
+                | &AstNode::Loop(_)
+                | &AstNode::StructDef(_) => {}
                 _ => {
                     let loc = node.src_loc().range.1;
                     ErrorContent::ExpectsSemicolon
@@ -413,7 +418,11 @@ impl<'src> AstParser<'src> {
             },
             (Some(_), false) => {}
             (None, true) => match node.inner() {
-                &AstNode::Block(_) | &AstNode::FnDef(_) | &AstNode::If(_) | &AstNode::Loop(_) => {}
+                &AstNode::Block(_)
+                | &AstNode::FnDef(_)
+                | &AstNode::If(_)
+                | &AstNode::Loop(_)
+                | &AstNode::StructDef(_) => {}
                 _ => {
                     let loc = node.src_loc().range.1;
                     ErrorContent::ExpectsSemicolonFoundEOF
@@ -717,7 +726,7 @@ impl<'src> AstParser<'src> {
                 type_parser::parse_type_expr(self, peeked_location)
                     .collect_err(self.err_collector)?
             }
-            &Token::BraceOpen | &Token::Semicolon | &Token::Comma => TypeExprNode::None.wrap(),
+            &Token::BraceOpen | &Token::Semicolon | &Token::Comma => TypeExprNode::void().wrap(),
             _ => todo!("error"),
         };
         let peeked_token = next_token!(self, peeked_location);
@@ -943,6 +952,88 @@ impl<'src> AstParser<'src> {
         };
         let node = AstNode::Array(arr_elements);
         let node = node.traced((start_loc.file_name, start_loc.range.0, end_loc.range.1));
+        Some(node)
+    }
+
+    /// Parse a struct definition, starting from the token `struct`
+    #[must_use]
+    #[inline]
+    fn parse_struct(
+        &mut self,
+        start_loc: SourceLocation<'src>,
+    ) -> Option<Traced<'src, AstNode<'src>>> {
+        let next_token = next_token!(self, start_loc);
+        let token_loc = next_token.src_loc();
+        let struct_name = next_token
+            .expect_identifier()
+            .ok_or(ErrorContent::ExpectToken(Token::Identifier("")).wrap(token_loc))
+            .collect_err(self.err_collector)?;
+
+        let peeked_token = peek_token!(self, token_loc);
+        let peeked_location = peeked_token.src_loc();
+        if let &Token::BraceOpen = peeked_token.inner() {
+            self.token_stream.next();
+        } else {
+            ErrorContent::ExpectToken(Token::BraceOpen)
+                .wrap(peeked_location)
+                .collect_into(self.err_collector);
+            return None;
+        }
+
+        let mut fields = Vec::<(&'src str, TypeExpr<'src>)>::new();
+        let mut previous_loc = peeked_location;
+        let end_loc = loop {
+            // get name
+            let next_token = next_token!(self, previous_loc);
+            let token_loc = next_token.src_loc();
+            let field_name = match next_token.into_inner() {
+                Token::BraceClose => {
+                    break token_loc;
+                }
+                Token::Identifier(field_name) => field_name,
+                _ => {
+                    ErrorContent::ExpectMultipleTokens(vec![
+                        Token::BraceClose,
+                        Token::Identifier(""),
+                    ])
+                    .wrap(token_loc)
+                    .collect_into(self.err_collector);
+                    return None;
+                }
+            };
+
+            // check colon
+            let peeked_token = peek_token!(self, start_loc);
+            let peeked_location = peeked_token.src_loc();
+            if let &Token::Colon = peeked_token.inner() {
+                self.token_stream.next();
+            } else {
+                ErrorContent::ExpectToken(Token::Colon)
+                    .wrap(peeked_location)
+                    .collect_into(self.err_collector);
+                return None;
+            }
+
+            // get type
+            let field_type = type_parser::parse_type_expr(self, peeked_location)
+                .collect_err(self.err_collector)?;
+            fields.push((field_name, field_type));
+
+            let peeked_token = peek_token!(self, peeked_location);
+            let peeked_location = peeked_token.src_loc();
+            match peeked_token.inner() {
+                Token::Comma => {
+                    self.token_stream.next();
+                }
+                _ => (),
+            }
+            previous_loc = peeked_location;
+        };
+        let node = AstNode::StructDef(StructDef {
+            name: struct_name,
+            fields,
+        })
+        .traced((start_loc.file_name, start_loc.range.0, end_loc.range.1));
         Some(node)
     }
 }
