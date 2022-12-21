@@ -74,12 +74,12 @@ pub enum AstNode<'src> {
     Call(AstNodeRef<'src>, Vec<AstNodeRef<'src>>),
 
     // --- Assignments
+    Let(&'src str, Option<TypeExpr<'src>>, Option<AstNodeRef<'src>>),
     Assign(AstNodeRef<'src>, AstNodeRef<'src>),
     /// +=, -=, *=, /=, %=
     MathOpAssign(MathOpKind, AstNodeRef<'src>, AstNodeRef<'src>),
     /// |=, &=, ^=
     BitOpAssign(BitOpKind, AstNodeRef<'src>, AstNodeRef<'src>),
-    Let(&'src str, Option<TypeExpr<'src>>, Option<AstNodeRef<'src>>),
 
     // --- Reference operations
     TakeRef(AstNodeRef<'src>),
@@ -160,11 +160,52 @@ impl<'a> Debug for AstNodeRef<'a> {
     }
 }
 
+/// Signature of a function
+#[derive(Clone)]
+pub struct FnSignature<'a> {
+    pub args: Vec<(&'a str, TypeExpr<'a>)>,
+    pub ret_type: TypeExpr<'a>,
+}
+
+impl Debug for FnSignature<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let arg_count = self.args.len();
+        match arg_count {
+            0 => write!(f, "()")?,
+            1 => {
+                let (name, dtype) = unsafe { self.args.first().unwrap_unchecked() };
+                write!(f, "({}:{:?})", name, dtype)?;
+            }
+            _ => {
+                write!(f, "(")?;
+                if f.alternate() {
+                    for (name, dtype) in self.args[0..self.args.len() - 1].iter() {
+                        write!(f, "{}:{:?}, ", name.escape_default(), dtype)?;
+                    }
+                } else {
+                    for (name, dtype) in self.args[0..self.args.len() - 1].iter() {
+                        write!(f, "{}:{:?},", name.escape_default(), dtype)?;
+                    }
+                }
+                let (name, dtype) = unsafe { self.args.last().unwrap_unchecked() };
+                write!(f, "{}:{:?}", name.escape_default(), dtype)?;
+                write!(f, ")")?;
+            }
+        }
+        if f.alternate() {
+            write!(f, " -> ")?;
+        } else {
+            write!(f, "->")?;
+        }
+        self.ret_type.fmt(f)?;
+        Ok(())
+    }
+}
+
 #[derive(Clone)]
 pub struct FnDef<'a> {
     pub name: &'a str,
-    pub args: Vec<(&'a str, TypeExpr<'a>)>,
-    pub ret_type: TypeExpr<'a>,
+    pub sign: FnSignature<'a>,
     pub body: Option<Vec<AstNodeRef<'a>>>,
 }
 
@@ -196,35 +237,7 @@ impl Debug for FnDef<'_> {
 #[inline]
 fn fmt_fn_head<'src>(f: &mut std::fmt::Formatter<'_>, fn_def: &FnDef<'src>) -> std::fmt::Result {
     write!(f, "{}", fn_def.name.escape_default())?;
-    let arg_count = fn_def.args.len();
-    match arg_count {
-        0 => write!(f, "()")?,
-        1 => {
-            let (name, dtype) = unsafe { fn_def.args.first().unwrap_unchecked() };
-            write!(f, "({}:{:?})", name, dtype)?;
-        }
-        _ => {
-            write!(f, "(")?;
-            if f.alternate() {
-                for (name, dtype) in fn_def.args[0..fn_def.args.len() - 1].iter() {
-                    write!(f, "{}:{:?}, ", name.escape_default(), dtype)?;
-                }
-            } else {
-                for (name, dtype) in fn_def.args[0..fn_def.args.len() - 1].iter() {
-                    write!(f, "{}:{:?},", name.escape_default(), dtype)?;
-                }
-            }
-            let (name, dtype) = unsafe { fn_def.args.last().unwrap_unchecked() };
-            write!(f, "{}:{:?}", name.escape_default(), dtype)?;
-            write!(f, ")")?;
-        }
-    }
-    if f.alternate() {
-        write!(f, " -> ")?;
-    } else {
-        write!(f, "->")?;
-    }
-    fn_def.ret_type.fmt(f)?;
+    fn_def.sign.fmt(f)?;
     Ok(())
 }
 

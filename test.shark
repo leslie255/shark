@@ -1,6 +1,5 @@
-enum Season {
-    spring,
-    summer,
-    autumn,
-    winter,
+printf("hello, world\n");
+
+fn main(args: [][]u8) -> i32 {
+    return if true { 0 } else { 1 };
 }

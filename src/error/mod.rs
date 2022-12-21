@@ -44,6 +44,11 @@ pub enum ErrorContent<'src> {
     ExpectMultipleTokens(Vec<Token<'src>>),
     NonUIntForArrLen,
     TypeExprStackOverflow,
+
+    // -- Syntax checker error
+    ExprNotAllowedAtTopLevel,
+    ExprNotAllowedAsFnBody,
+    ExprNotAllowedAsChild,
 }
 impl<'src> ErrorContent<'src> {
     #[must_use]
@@ -79,6 +84,9 @@ impl<'src> ErrorContent<'src> {
             Self::ExpectMultipleTokens(_) => "expect tokens",
             Self::NonUIntForArrLen => "expect unsigned integer for array",
             Self::TypeExprStackOverflow => "type expression exceeds recursive limit (256)",
+            Self::ExprNotAllowedAtTopLevel => "expression not allowed at top level",
+            Self::ExprNotAllowedAsFnBody => "expression not allowed as function body",
+            Self::ExprNotAllowedAsChild => "expression is not allowed as child",
         }
     }
     fn description(&self) -> String {
@@ -120,6 +128,9 @@ impl<'src> ErrorContent<'src> {
             Self::ExpectMultipleTokens(tokens) => format!("Expect tokens: {:?}", tokens),
             Self::NonUIntForArrLen => "Array length should be an unsigned integer".to_string(),
             Self::TypeExprStackOverflow => "Type expression exceeds stack limit".to_string(),
+            Self::ExprNotAllowedAtTopLevel => "Consider wrapping this into a function".to_string(),
+            Self::ExprNotAllowedAsFnBody => "This expression is allowed as a statement in function body".to_string(),
+            Self::ExprNotAllowedAsChild => "This expression is not allowed here".to_string(),
         }
     }
 }
@@ -215,9 +226,9 @@ fn print_err(
     );
     let line_text = &file_content[line_start..line_end];
     println!("{}", line_text);
-    for c in line_text[0..col_num].chars() {
+    for c in line_text[0..col_num.saturating_sub(1)].chars() {
         if c == '\t' {
-            print!("   ");
+            print!("    ");
         } else {
             print!(" ");
         }

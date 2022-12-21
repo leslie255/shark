@@ -3,6 +3,7 @@ mod buffered_content;
 mod error;
 mod string;
 mod token;
+mod checks;
 
 use std::env;
 
