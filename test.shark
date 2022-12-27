@@ -1,5 +1,7 @@
-printf("hello, world\n");
-
 fn main(args: [][]u8) -> i32 {
-    return if true { 0 } else { 1 };
+    if true {
+        return 0;
+    } else {
+        return 1;
+    }
 }

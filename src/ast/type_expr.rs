@@ -9,6 +9,47 @@ impl<'a> TypeExpr<'a> {
     fn root(&self) -> &TypeExprNode<'a> {
         &self.pool[self.root]
     }
+
+    pub fn is_numeric(&self) -> bool {
+        match self.root() {
+            TypeExprNode::USize
+            | TypeExprNode::ISize
+            | TypeExprNode::U64
+            | TypeExprNode::U32
+            | TypeExprNode::U16
+            | TypeExprNode::U8
+            | TypeExprNode::I64
+            | TypeExprNode::I32
+            | TypeExprNode::I16
+            | TypeExprNode::I8 => true,
+            _ => false,
+        }
+    }
+
+    pub fn is_signed_numeric(&self) -> bool {
+        match self.root() {
+            TypeExprNode::ISize
+            | TypeExprNode::I64
+            | TypeExprNode::I32
+            | TypeExprNode::I16
+            | TypeExprNode::I8
+            | TypeExprNode::F64
+            | TypeExprNode::F32 => true,
+            _ => false,
+        }
+    }
+
+    pub fn is_float(&self) -> bool {
+        match self.root() {
+            TypeExprNode::F64 | TypeExprNode::F32 => true,
+            _ => false,
+        }
+    }
+}
+impl<'a> Display for TypeExpr<'a> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        self.root().fmt(&self.pool, f)
+    }
 }
 impl<'a> Debug for TypeExpr<'a> {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
@@ -30,8 +71,7 @@ pub enum TypeExprNode<'a> {
     I8,
     F64,
     F32,
-    Char32,
-    Char8,
+    Char,
     Bool,
 
     Ptr(usize),
@@ -47,7 +87,6 @@ pub enum TypeExprNode<'a> {
     TypeName(&'a str),
 }
 impl<'a> TypeExprNode<'a> {
-
     /// A shorthand for creating the `()` empty tuple type
     #[inline]
     #[must_use]
@@ -69,8 +108,7 @@ impl<'a> TypeExprNode<'a> {
             Self::I8 => write!(f, "i8")?,
             Self::F64 => write!(f, "f64")?,
             Self::F32 => write!(f, "f32")?,
-            Self::Char32 => write!(f, "char32")?,
-            Self::Char8 => write!(f, "char8")?,
+            Self::Char => write!(f, "char")?,
             Self::Bool => write!(f, "bool")?,
             Self::Ptr(child_i) => {
                 write!(f, "*")?;

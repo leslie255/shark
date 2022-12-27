@@ -1,9 +1,9 @@
 mod ast;
 mod buffered_content;
+mod checks;
 mod error;
 mod string;
 mod token;
-mod checks;
 
 use std::env;
 

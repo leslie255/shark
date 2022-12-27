@@ -53,8 +53,7 @@ fn parse_type_expr_node<'src>(
         Token::Identifier("i8") => TypeExprNode::I8,
         Token::Identifier("f64") => TypeExprNode::F64,
         Token::Identifier("f32") => TypeExprNode::F32,
-        Token::Identifier("char32") => TypeExprNode::Char32,
-        Token::Identifier("char8") => TypeExprNode::Char8,
+        Token::Identifier("char") => TypeExprNode::Char,
         Token::Identifier("bool") => TypeExprNode::Bool,
         Token::Identifier(typename) => TypeExprNode::TypeName(typename),
         Token::AndOp => {

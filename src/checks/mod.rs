@@ -4,6 +4,7 @@ use std::collections::HashMap;
 use crate::ast::{type_expr::TypeExpr, FnSignature};
 
 pub mod syntaxchecker;
+pub mod symboltable;
 
 /// One item in the symbol table stack
 /// The symbol table is stored as a stack, every time the parser enters a block, a new `Symbol` is
