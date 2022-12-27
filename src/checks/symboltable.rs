@@ -1,4 +1,3 @@
-#![allow(dead_code)]
 use std::collections::hash_map::Entry;
 use std::collections::HashMap;
 
@@ -9,10 +8,9 @@ use crate::ast::FnSignature;
 /// determine whether or not a type expression is one of the possible types
 #[derive(Debug, Clone)]
 pub enum PossibleTypes<'src> {
-    IntNumeric,         // u64, u32, u16, u8, i64, i32, i16, i8, f64, f32, 
-    NegativeIntNumeric, // i64, i32, i16, i8, f64, f32, 
+    IntNumeric,         // u64, u32, u16, u8, i64, i32, i16, i8, f64, f32,
+    NegativeIntNumeric, // i64, i32, i16, i8, f64, f32,
     FloatNumeric,       // f64, f32
-    StringLiteral(u64), // [x]u8, [x]char
     Known(TypeExpr<'src>),
 }
 
@@ -23,22 +21,17 @@ impl<'src> PossibleTypes<'src> {
             PossibleTypes::IntNumeric => TypeExprNode::I32.wrap(),
             PossibleTypes::NegativeIntNumeric => TypeExprNode::I32.wrap(),
             PossibleTypes::FloatNumeric => TypeExprNode::F64.wrap(),
-            PossibleTypes::StringLiteral(size) => TypeExpr {
-                pool: vec![TypeExprNode::U8, TypeExprNode::Array(size, 0)],
-                root: 1,
-            },
             PossibleTypes::Known(t) => t.clone(),
         }
     }
 
     /// Returns whether or not a type is included in all possible types
-    pub fn matches_types(self, t: &TypeExpr) -> bool {
+    pub fn matches_types(&self, t: &TypeExpr, symbol_table: &SymbolTable<'src>) -> bool {
         match self {
-            PossibleTypes::IntNumeric => t.is_numeric(),
-            PossibleTypes::NegativeIntNumeric => t.is_signed_numeric(),
-            PossibleTypes::FloatNumeric => t.is_float(),
-            PossibleTypes::StringLiteral(_) => todo!(),
-            PossibleTypes::Known(_) => todo!(),
+            PossibleTypes::IntNumeric => t.is_numeric(symbol_table),
+            PossibleTypes::NegativeIntNumeric => t.is_signed_numeric(symbol_table),
+            PossibleTypes::FloatNumeric => t.is_float(symbol_table),
+            PossibleTypes::Known(t0) => TypeExpr::eq(t0, t, symbol_table),
         }
     }
 }
@@ -51,7 +44,7 @@ pub enum SymbolType<'src> {
 }
 
 impl<'src> SymbolType<'src> {
-    pub fn as_var(&self) -> Option<&PossibleTypes> {
+    pub fn as_var(&self) -> Option<&PossibleTypes<'src>> {
         if let Self::Var(v) = self {
             Some(v)
         } else {
@@ -59,7 +52,7 @@ impl<'src> SymbolType<'src> {
         }
     }
 
-    pub fn as_fn(&self) -> Option<&FnSignature> {
+    pub fn as_fn(&self) -> Option<&FnSignature<'src>> {
         if let Self::Fn(v) = self {
             Some(v)
         } else {
@@ -98,7 +91,7 @@ impl<'src> SymbolTable<'src> {
     /// If a variable with the given name exists in the symbol table, returns a reference to a
     /// `PossibleTypes` enum representing the possible types of the variable.
     /// Otherwise (if no variable with the given name exists), returns `None`.
-    pub fn var_type(&self, var_name: &'src str) -> Option<&PossibleTypes> {
+    pub fn var_type(&self, var_name: &'src str) -> Option<&PossibleTypes<'src>> {
         self.symbols
             .iter()
             .rev()
@@ -116,12 +109,26 @@ impl<'src> SymbolTable<'src> {
     ///
     /// If a function with the given name exists, returns a reference to its signature.
     /// Otherwise, returns `None`.
-    pub fn fn_signature(&self, fn_name: &'src str) -> Option<&FnSignature> {
+    pub fn fn_signature(&self, fn_name: &'src str) -> Option<&FnSignature<'src>> {
         self.symbols
             .iter()
             .rev()
             .find_map(|symbols| symbols.get(fn_name))?
             .as_fn()
+    }
+
+    /// Returns the type of a typename
+    ///
+    /// # Arguments
+    ///
+    /// * `typename` - The typename
+    ///
+    /// # Returns
+    ///
+    /// If a type with the given name exists, returns a reference to that type
+    /// Otherwise, returns `None`.
+    pub fn typename(&self, typename: &'src str,) -> Option<&TypeExpr<'src>> {
+        self.typenames.get(typename)
     }
 
     /// The symbol table is stored as a stack, when the type checker enters a block, a new empty
