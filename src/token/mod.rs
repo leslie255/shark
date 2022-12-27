@@ -67,6 +67,7 @@ pub enum Token<'a> {
 
     // --- Keywards
     As,
+    Alias,
     Break,
     Continue,
     Else,

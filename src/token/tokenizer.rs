@@ -78,6 +78,7 @@ impl<'src> TokenStream<'src> {
         let str = self.source.slice(start_index..end_index);
         match str {
             "as" => Some(Token::As.wrap_loc((self.path, start_index, end_index))),
+            "alias" => Some(Token::Alias.wrap_loc((self.path, start_index, end_index))),
             "break" => Some(Token::Break.wrap_loc((self.path, start_index, end_index))),
             "continue" => Some(Token::Continue.wrap_loc((self.path, start_index, end_index))),
             "else" => Some(Token::Else.wrap_loc((self.path, start_index, end_index))),
