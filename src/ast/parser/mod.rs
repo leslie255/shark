@@ -291,8 +291,16 @@ impl<'src> AstParser<'src> {
                 Token::RoundParenOpen => node = self.parse_paren(token_location)?,
                 Token::RectParenOpen => node = self.parse_arr_literal(token_location)?,
                 Token::Return => {
-                    let (child, loc) = parse!(mono_op, precedence = 15);
-                    node = AstNode::Return(child).traced(loc);
+                    let peek = peek_token!(self, token_location);
+                    match peek.inner() {
+                        &Token::Semicolon | &Token::Comma => {
+                            node = AstNode::Return(None).traced(token_location);
+                        }
+                        _ => {
+                            let (child, loc) = parse!(mono_op, precedence = 15);
+                            node = AstNode::Return(Some(child)).traced(loc);
+                        }
+                    }
                 }
                 Token::Break => node = AstNode::Break.traced(token_location),
                 Token::Continue => node = AstNode::Continue.traced(token_location),

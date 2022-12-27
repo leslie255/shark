@@ -90,7 +90,7 @@ pub enum AstNode<'src> {
     FnDef(FnDef<'src>),
     If(IfExpr<'src>),
     Loop(Vec<AstNodeRef<'src>>),
-    Return(AstNodeRef<'src>),
+    Return(Option<AstNodeRef<'src>>),
     Break,
     Continue,
 
