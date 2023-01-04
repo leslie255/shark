@@ -38,15 +38,15 @@ impl<'src> PossibleTypes<'src> {
 
 #[derive(Debug, Clone)]
 pub enum SymbolType<'src> {
-    Var(u64, PossibleTypes<'src>),
+    Var( PossibleTypes<'src>),
     Fn(FnSignature<'src>),
     // type names are stored separately (there are no local type names)
 }
 
 impl<'src> SymbolType<'src> {
-    pub fn as_var(&self) -> Option<(u64, &PossibleTypes<'src>)> {
-        if let Self::Var(id, ty) = self {
-            Some((*id, ty))
+    pub fn as_var(&self) -> Option<&PossibleTypes<'src>> {
+        if let Self::Var(v) = self {
+            Some(v)
         } else {
             None
         }
@@ -93,44 +93,6 @@ impl<'s> SymbolTable<'s> {
     /// `PossibleTypes` enum representing the possible types of the variable.
     /// Otherwise (if no variable with the given name exists), returns `None`.
     pub fn var_type(&self, var_name: &'s str) -> Option<&PossibleTypes<'s>> {
-        self.symbols
-            .iter()
-            .rev()
-            .find_map(|symbols| symbols.get(var_name))?
-            .as_var()
-            .map(|(_, t)| t)
-    }
-
-    /// Returns the ID of the variable with the given name.
-    ///
-    /// # Arguments
-    ///
-    /// * `var_name` - The name of the variable
-    ///
-    /// # Returns
-    ///
-    /// If a variable with the given name exists in the symbol table, returns its Id
-    /// Otherwise return `None`.
-    pub fn var_id(&self, var_name: &'s str) -> Option<u64> {
-        self.symbols
-            .iter()
-            .rev()
-            .find_map(|symbols| symbols.get(var_name))?
-            .as_var()
-            .map(|(id, _)| id)
-    }
-
-    /// Returns the ID and type of the variable with the given name.
-    ///
-    /// # Arguments
-    ///
-    /// * `var_name` - The name of the variable
-    ///
-    /// # Returns
-    ///
-    /// If a variable with the given name exists in the symbol table, returns its Id
-    /// Otherwise return `None`.
-    pub fn var_id_type(&self, var_name: &'s str) -> Option<(u64, &PossibleTypes<'s>)> {
         self.symbols
             .iter()
             .rev()
@@ -196,13 +158,13 @@ impl<'s> SymbolTable<'s> {
     /// ```
     /// let mut symbols = SymbolTable::default();
     /// symbols.push_layer();
-    /// symbols.add_var("x", 0, PossibleTypes::IntNumeric);
+    /// symbols.add_var("x", PossibleTypes::IntNumeric);
     /// ```
-    pub fn add_var(&mut self, var_name: &'s str, id: u64, possible_types: PossibleTypes<'s>) {
+    pub fn add_var(&mut self, var_name: &'s str, possible_types: PossibleTypes<'s>) {
         self.symbols
             .last_mut()
             .expect("Adding a variable to an empty stack")
-            .insert(var_name, SymbolType::Var(id, possible_types));
+            .insert(var_name, SymbolType::Var(possible_types));
     }
 
     /// Adds a new function with the given name and signature to the top symbol table layer.

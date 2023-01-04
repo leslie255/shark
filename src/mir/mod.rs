@@ -2,7 +2,7 @@
 
 pub mod translator;
 
-use std::{fmt::Debug, ops::Deref};
+use std::{collections::HashMap, fmt::Debug, ops::Deref};
 
 pub(self) use cranelift::codegen::ir::{types as cl_types, types::Type as ClType};
 
@@ -82,7 +82,7 @@ pub struct MirFnDef<'s> {
 pub struct MirBlock<'s> {
     pub body: Vec<MirNodeRef<'s>>,
     /// Information of the variables defined in this block
-    pub vars: Vec<MirVarInfo>,
+    pub vars: HashMap<&'s str, Vec<MirVarInfo>>,
 }
 
 /// Stores information about a variable
@@ -95,11 +95,7 @@ pub struct MirVarInfo {
 
 impl From<(u64, ClType, bool)> for MirVarInfo {
     fn from((id, dtype, is_mut): (u64, ClType, bool)) -> Self {
-        Self {
-            id,
-            dtype,
-            is_mut,
-        }
+        Self { id, dtype, is_mut }
     }
 }
 
