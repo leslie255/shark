@@ -44,6 +44,8 @@ fn parse_type_expr_node<'src>(
         Token::Identifier("usize") => TypeExprNode::USize,
         Token::Identifier("isize") => TypeExprNode::ISize,
         Token::Identifier("u64") => TypeExprNode::U64,
+        Token::Identifier("u128") => TypeExprNode::U128,
+        Token::Identifier("i128") => TypeExprNode::I128,
         Token::Identifier("u32") => TypeExprNode::U32,
         Token::Identifier("u16") => TypeExprNode::U16,
         Token::Identifier("u8") => TypeExprNode::U8,

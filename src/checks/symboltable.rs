@@ -38,15 +38,15 @@ impl<'src> PossibleTypes<'src> {
 
 #[derive(Debug, Clone)]
 pub enum SymbolType<'src> {
-    Var(PossibleTypes<'src>),
+    Var(u64, PossibleTypes<'src>),
     Fn(FnSignature<'src>),
     // type names are stored separately (there are no local type names)
 }
 
 impl<'src> SymbolType<'src> {
-    pub fn as_var(&self) -> Option<&PossibleTypes<'src>> {
-        if let Self::Var(v) = self {
-            Some(v)
+    pub fn as_var(&self) -> Option<(u64, &PossibleTypes<'src>)> {
+        if let Self::Var(id, ty) = self {
+            Some((*id, ty))
         } else {
             None
         }
@@ -61,6 +61,7 @@ impl<'src> SymbolType<'src> {
     }
 }
 
+#[derive(Debug, Clone)]
 /// The symbol table is stored as a stack, every time the parser enters a block, a new set of
 /// symbols is pushed onto the stack containing the symbols in that block
 pub struct SymbolTable<'src> {
@@ -74,12 +75,12 @@ impl Default for SymbolTable<'_> {
     fn default() -> Self {
         Self {
             typenames: HashMap::default(),
-            symbols: Vec::default(),
+            symbols: vec![HashMap::new()],
         }
     }
 }
 
-impl<'src> SymbolTable<'src> {
+impl<'s> SymbolTable<'s> {
     /// Returns the type of the variable with the given name.
     ///
     /// # Arguments
@@ -91,7 +92,45 @@ impl<'src> SymbolTable<'src> {
     /// If a variable with the given name exists in the symbol table, returns a reference to a
     /// `PossibleTypes` enum representing the possible types of the variable.
     /// Otherwise (if no variable with the given name exists), returns `None`.
-    pub fn var_type(&self, var_name: &'src str) -> Option<&PossibleTypes<'src>> {
+    pub fn var_type(&self, var_name: &'s str) -> Option<&PossibleTypes<'s>> {
+        self.symbols
+            .iter()
+            .rev()
+            .find_map(|symbols| symbols.get(var_name))?
+            .as_var()
+            .map(|(_, t)| t)
+    }
+
+    /// Returns the ID of the variable with the given name.
+    ///
+    /// # Arguments
+    ///
+    /// * `var_name` - The name of the variable
+    ///
+    /// # Returns
+    ///
+    /// If a variable with the given name exists in the symbol table, returns its Id
+    /// Otherwise return `None`.
+    pub fn var_id(&self, var_name: &'s str) -> Option<u64> {
+        self.symbols
+            .iter()
+            .rev()
+            .find_map(|symbols| symbols.get(var_name))?
+            .as_var()
+            .map(|(id, _)| id)
+    }
+
+    /// Returns the ID and type of the variable with the given name.
+    ///
+    /// # Arguments
+    ///
+    /// * `var_name` - The name of the variable
+    ///
+    /// # Returns
+    ///
+    /// If a variable with the given name exists in the symbol table, returns its Id
+    /// Otherwise return `None`.
+    pub fn var_id_type(&self, var_name: &'s str) -> Option<(u64, &PossibleTypes<'s>)> {
         self.symbols
             .iter()
             .rev()
@@ -109,7 +148,7 @@ impl<'src> SymbolTable<'src> {
     ///
     /// If a function with the given name exists, returns a reference to its signature.
     /// Otherwise, returns `None`.
-    pub fn fn_signature(&self, fn_name: &'src str) -> Option<&FnSignature<'src>> {
+    pub fn fn_signature(&self, fn_name: &'s str) -> Option<&FnSignature<'s>> {
         self.symbols
             .iter()
             .rev()
@@ -127,19 +166,19 @@ impl<'src> SymbolTable<'src> {
     ///
     /// If a type with the given name exists, returns a reference to that type
     /// Otherwise, returns `None`.
-    pub fn typename(&self, typename: &'src str,) -> Option<&TypeExpr<'src>> {
+    pub fn typename(&self, typename: &'s str) -> Option<&TypeExpr<'s>> {
         self.typenames.get(typename)
     }
 
     /// The symbol table is stored as a stack, when the type checker enters a block, a new empty
     /// layer is pushed onto the stack
-    pub(super) fn push_layer(&mut self) {
+    pub fn push_layer(&mut self) {
         self.symbols.push(HashMap::default());
     }
 
     /// The symbol table is stored as a stack, when the type checker leaves a block, a new empty
     /// layer is popped off the stack
-    pub(super) fn pop_layer(&mut self) {
+    pub fn pop_layer(&mut self) {
         self.symbols.pop();
     }
 
@@ -149,6 +188,7 @@ impl<'src> SymbolTable<'src> {
     /// # Arguments
     ///
     /// * `var_name` - A string slice containing the name of the variable to add.
+    /// * `id` - The ID for that variable
     /// * `possible_types` - A `PossibleTypes` enum representing the possible types of the variable.
     ///
     /// # Examples
@@ -156,13 +196,13 @@ impl<'src> SymbolTable<'src> {
     /// ```
     /// let mut symbols = SymbolTable::default();
     /// symbols.push_layer();
-    /// symbols.add_var("x", PossibleTypes::IntNumeric);
+    /// symbols.add_var("x", 0, PossibleTypes::IntNumeric);
     /// ```
-    pub(super) fn add_var(&mut self, var_name: &'src str, possible_types: PossibleTypes<'src>) {
+    pub fn add_var(&mut self, var_name: &'s str, id: u64, possible_types: PossibleTypes<'s>) {
         self.symbols
             .last_mut()
             .expect("Adding a variable to an empty stack")
-            .insert(var_name, SymbolType::Var(possible_types));
+            .insert(var_name, SymbolType::Var(id, possible_types));
     }
 
     /// Adds a new function with the given name and signature to the top symbol table layer.
@@ -195,7 +235,7 @@ impl<'src> SymbolTable<'src> {
     /// );
     /// assert_eq!(fn_exists, true);
     /// ```
-    pub(super) fn add_fn(&mut self, fn_name: &'src str, fn_signature: FnSignature<'src>) -> bool {
+    pub fn add_fn(&mut self, fn_name: &'s str, fn_signature: FnSignature<'s>) -> bool {
         let top_layer = self
             .symbols
             .last_mut()
@@ -221,7 +261,7 @@ impl<'src> SymbolTable<'src> {
     /// let mut symbols = SymbolTable::default();
     /// symbols.add_typename("Byte", TypeExprNode::U8.wrap());
     /// ```
-    pub(super) fn add_typename(&mut self, typename: &'src str, dtype: TypeExpr<'src>) {
+    pub fn add_typename(&mut self, typename: &'s str, dtype: TypeExpr<'s>) {
         self.typenames.insert(typename, dtype);
     }
 }

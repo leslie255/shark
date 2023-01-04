@@ -18,7 +18,7 @@ use type_expr::TypeExpr;
 pub struct Ast<'src> {
     node_pool: Box<Vec<Traced<'src, AstNode<'src>>>>,
     pub str_pool: Vec<String>,
-    pub root_nodes: Vec<Traced<'src, AstNodeRef<'src>>>,
+    pub root_nodes: Vec<AstNodeRef<'src>>,
 }
 
 impl<'src> Ast<'src> {
@@ -151,7 +151,7 @@ impl<'a> Deref for AstNodeRef<'a> {
     /// Dereferences the AstNodeRef to the AstNode it points to
     #[inline]
     fn deref(&self) -> &Self::Target {
-        unsafe { self.pool.as_ref().unwrap().get(self.i).unwrap() }
+        unsafe { (*self.pool).get_unchecked(self.i) }
     }
 }
 impl<'a> Debug for AstNodeRef<'a> {

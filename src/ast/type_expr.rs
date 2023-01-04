@@ -9,24 +9,16 @@ pub struct TypeExpr<'a> {
 }
 impl<'a> TypeExpr<'a> {
     #[inline]
-    fn root(&self) -> &TypeExprNode<'a> {
+    pub fn root(&self) -> &TypeExprNode<'a> {
         &self.pool[self.root]
     }
 
     #[inline]
     pub fn is_numeric(&self, symbol_table: &SymbolTable<'a>) -> bool {
+        use TypeExprNode::*;
         match self.root() {
-            TypeExprNode::USize
-            | TypeExprNode::ISize
-            | TypeExprNode::U64
-            | TypeExprNode::U32
-            | TypeExprNode::U16
-            | TypeExprNode::U8
-            | TypeExprNode::I64
-            | TypeExprNode::I32
-            | TypeExprNode::I16
-            | TypeExprNode::I8 => true,
-            &TypeExprNode::TypeName(typename) => symbol_table
+            U128 | I128 | USize | ISize | U64 | U32 | U16 | U8 | I64 | I32 | I16 | I8 => true,
+            &TypeName(typename) => symbol_table
                 .typename(typename)
                 .map_or(false, |t| t.is_numeric(symbol_table)),
             _ => false,
@@ -35,15 +27,10 @@ impl<'a> TypeExpr<'a> {
 
     #[inline]
     pub fn is_signed_numeric(&self, symbol_table: &SymbolTable<'a>) -> bool {
+        use TypeExprNode::*;
         match self.root() {
-            TypeExprNode::ISize
-            | TypeExprNode::I64
-            | TypeExprNode::I32
-            | TypeExprNode::I16
-            | TypeExprNode::I8
-            | TypeExprNode::F64
-            | TypeExprNode::F32 => true,
-            &TypeExprNode::TypeName(typename) => symbol_table
+            U128 | I128 | ISize | I64 | I32 | I16 | I8 | F64 | F32 => true,
+            &TypeName(typename) => symbol_table
                 .typename(typename)
                 .map_or(false, |t| t.is_signed_numeric(symbol_table)),
             _ => false,
@@ -52,9 +39,10 @@ impl<'a> TypeExpr<'a> {
 
     #[inline]
     pub fn is_float(&self, symbol_table: &SymbolTable<'a>) -> bool {
+        use TypeExprNode::*;
         match self.root() {
-            TypeExprNode::F64 | TypeExprNode::F32 => true,
-            &TypeExprNode::TypeName(typename) => symbol_table
+            F64 | F32 => true,
+            &TypeName(typename) => symbol_table
                 .typename(typename)
                 .map_or(false, |t| t.is_float(symbol_table)),
             _ => false,
@@ -80,10 +68,12 @@ impl<'a> Debug for TypeExpr<'a> {
 pub enum TypeExprNode<'a> {
     USize,
     ISize,
+    U128,
     U64,
     U32,
     U16,
     U8,
+    I128,
     I64,
     I32,
     I16,
@@ -124,10 +114,12 @@ impl<'a> TypeExprNode<'a> {
         match self {
             Self::USize => write!(f, "usize")?,
             Self::ISize => write!(f, "isize")?,
+            Self::U128 => write!(f, "u128")?,
             Self::U64 => write!(f, "u64")?,
             Self::U32 => write!(f, "u32")?,
             Self::U16 => write!(f, "u16")?,
             Self::U8 => write!(f, "u8")?,
+            Self::I128 => write!(f, "i128")?,
             Self::I64 => write!(f, "i64")?,
             Self::I32 => write!(f, "i32")?,
             Self::I16 => write!(f, "i16")?,
@@ -217,9 +209,9 @@ impl<'a> TypeExprNode<'a> {
                 pool[*ret_type].fmt(pool, f)?;
             }
             Self::TypeName(name) => Display::fmt(&name.escape_default(), f)?,
-            Self::Struct => write!(f, "STRUCT")?,
-            Self::Union => write!(f, "UNION")?,
-            Self::Enum => write!(f, "ENUM")?,
+            Self::Struct => write!(f, "{{STRUCT}}")?,
+            Self::Union => write!(f, "{{UNION}}")?,
+            Self::Enum => write!(f, "{{ENUM}}")?,
         }
         Ok(())
     }
@@ -244,6 +236,8 @@ impl<'a> TypeExprNode<'a> {
         match (lhs, rhs) {
             (TypeExprNode::USize, TypeExprNode::USize)
             | (TypeExprNode::ISize, TypeExprNode::ISize)
+            | (TypeExprNode::U128, TypeExprNode::U128)
+            | (TypeExprNode::I128, TypeExprNode::I128)
             | (TypeExprNode::U64, TypeExprNode::U64)
             | (TypeExprNode::U32, TypeExprNode::U32)
             | (TypeExprNode::U16, TypeExprNode::U16)
@@ -296,6 +290,9 @@ impl<'a> TypeExprNode<'a> {
                     .is_none()
             }
             (&TypeExprNode::TypeName(lhs_name), &TypeExprNode::TypeName(rhs_name)) => {
+                if lhs_name == rhs_name {
+                    return true;
+                }
                 let lhs_pool = match symbol_table.typename(lhs_name) {
                     Some(t) => t,
                     None => return false,
@@ -304,29 +301,36 @@ impl<'a> TypeExprNode<'a> {
                     Some(t) => t,
                     None => return false,
                 };
-                Self::eq(lhs_pool, rhs_pool, lhs_pool.root(), rhs_pool.root(), symbol_table)
-            },
+                Self::eq(
+                    lhs_pool,
+                    rhs_pool,
+                    lhs_pool.root(),
+                    rhs_pool.root(),
+                    symbol_table,
+                )
+            }
             (&TypeExprNode::TypeName(lhs_name), rhs) => {
                 let lhs_pool = match symbol_table.typename(lhs_name) {
                     Some(t) => t,
                     None => return false,
                 };
                 Self::eq(lhs_pool, rhs_pool, lhs_pool.root(), rhs, symbol_table)
-            },
+            }
             (lhs, TypeExprNode::TypeName(rhs_name)) => {
                 let rhs_pool = match symbol_table.typename(rhs_name) {
                     Some(t) => t,
                     None => return false,
                 };
                 Self::eq(lhs_pool, rhs_pool, lhs, rhs_pool.root(), symbol_table)
-            },
-            (TypeExprNode::Struct, _) => false,
-            (TypeExprNode::Union, _) => false,
-            (TypeExprNode::Enum, _) => false,
-            (_, TypeExprNode::Struct) => false,
-            (_, TypeExprNode::Union) => false,
-            (_, TypeExprNode::Enum) => false,
-            _ => todo!(),
+            }
+            (TypeExprNode::Struct, TypeExprNode::Struct)
+            | (TypeExprNode::Union, TypeExprNode::Union)
+            | (TypeExprNode::Enum, TypeExprNode::Enum) => {
+                // cases where type names equals should've already returned `true`, so
+                // this should never be reached
+                unimplemented!()
+            }
+            _ => false,
         }
     }
 }

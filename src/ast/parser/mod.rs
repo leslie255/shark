@@ -27,7 +27,7 @@ pub struct AstParser<'src> {
     path: &'src str,
     err_collector: &'src ErrorCollector<'src>,
     token_stream: Peekable<TokenStream<'src>>,
-    ast: Ast<'src>,
+    pub ast: Ast<'src>,
 }
 
 impl<'src> Iterator for AstParser<'src> {
@@ -36,7 +36,9 @@ impl<'src> Iterator for AstParser<'src> {
     fn next(&mut self) -> Option<Self::Item> {
         let node = self.parse_expr(15, true)?;
         syntaxchecker::check_top_level(&node, self.err_collector);
-        Some(self.ast.add_node(node))
+        let node_ref = self.ast.add_node(node);
+        self.ast.root_nodes.push(node_ref.clone());
+        Some(node_ref)
     }
 }
 
