@@ -149,45 +149,18 @@ fn convert_fn_def<'s>(
     symbol_table.add_fn(ast_fn_def.name, ast_fn_def.sign.clone());
     symbol_table.push_layer();
     let mut context = Context::default();
-    let args: Vec<(&str, Vec<(u64, ClType)>)> = ast_fn_def
-        .sign
-        .args
-        .iter()
-        .map(|(name, ty)| {
-            symbol_table.add_var(*name, PossibleTypes::Known(ty.clone()));
-            let mut flattened = Vec::<(u64, ClType)>::new();
-            flatten_type(ty, |cl_ty| {
-                let id = context.suggest_new_var_id();
-                flattened.push((id, cl_ty))
-            });
-            (*name, flattened)
-        })
-        .collect();
-    // used later in MirFnDef
-    let arg_types: Vec<ClType> = args
-        .iter()
-        .flat_map(|(_, flattened)| flattened)
-        .map(|(_, ty)| *ty)
-        .collect();
-    // used in MirBlock's header information (argument are just treated the same as variables at this
-    // level)
-    let arg_vars: HashMap<&str, Vec<MirVarInfo>> = args
-        .into_iter()
-        // transform Vec<(&str, Vec<(u64, ClType)>)>
-        // into      HashMap<&str, Vec<MirVarInfo>>
-        .map(|(name, flattened)| {
-            let flattened_vars = flattened
-                .into_iter()
-                // wrap (u64, ClType) into MirVarInfo
-                .map(|(id, dtype)| MirVarInfo {
-                    id,
-                    dtype,
-                    is_mut: false,
-                })
-                .collect::<Vec<MirVarInfo>>();
-            (name, flattened_vars)
-        })
-        .collect();
+    let (mut arg_types, mut arg_vars): (Vec<ClType>, HashMap<&str, Vec<MirVarInfo>>) =
+        Default::default();
+    ast_fn_def.sign.args.iter().for_each(|(name, ty)| {
+        symbol_table.add_var(*name, PossibleTypes::Known(ty.clone()));
+        let mut var_info = Vec::<MirVarInfo>::new();
+        flatten_type(ty, |cl_ty| {
+            let id = context.suggest_new_var_id();
+            var_info.push((id, cl_ty, false).into());
+            arg_types.push(cl_ty);
+        });
+        arg_vars.insert(*name, var_info);
+    });
     let mut mir_body = MirBlock {
         body: Vec::new(),
         vars: arg_vars,
