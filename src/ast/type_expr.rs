@@ -9,6 +9,14 @@ pub struct TypeExpr<'a> {
 }
 impl<'a> TypeExpr<'a> {
     #[inline]
+    pub fn is_void(&self) -> bool {
+        match self.root() {
+            TypeExprNode::Tuple(ref nodes) => nodes.is_empty(),
+            _ => false,
+        }
+    }
+
+    #[inline]
     pub fn root(&self) -> &TypeExprNode<'a> {
         &self.pool[self.root]
     }
@@ -108,6 +116,13 @@ impl<'a> TypeExprNode<'a> {
     #[must_use]
     pub const fn void() -> Self {
         Self::Tuple(Vec::new())
+    }
+
+    pub fn is_void(&self) -> bool {
+        match self {
+            Self::Tuple(children) => children.is_empty(),
+            _ => false,
+        }
     }
 
     fn fmt(&self, pool: &Vec<TypeExprNode<'_>>, f: &mut Formatter<'_>) -> std::fmt::Result {

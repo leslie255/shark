@@ -68,6 +68,12 @@ fn basic_asttype_to_cltype<'s>(node: &TypeExprNode<'s>, pool: &TypeExpr<'s>) -> 
     }
 }
 
+static TUPLE_PATHS: [&'static str; 32] = [
+    "_0", "_1", "_2", "_3", "_4", "_5", "_6", "_7", "_8", "_9", "_10", "_11", "_12", "_13", "_14",
+    "_15", "_16", "_17", "_18", "_19", "_20", "_21", "_22", "_23", "_24", "_25", "_26", "_27",
+    "_28", "_29", "_30", "_31",
+];
+
 /// Flatten a type expression into a list of cranelift data types
 ///
 /// This function will recursively traverse the type expression and call the
@@ -75,27 +81,44 @@ fn basic_asttype_to_cltype<'s>(node: &TypeExprNode<'s>, pool: &TypeExpr<'s>) -> 
 ///
 /// # Arguments
 ///
+/// * `name` - Name of the variable
 /// * `input_ty` - The type expression to flatten
 /// * `handler` - The handler to call for each basic type found
-fn flatten_type<'s, F: FnMut(ClType)>(input_ty: &TypeExpr<'s>, mut handler: F) {
-    fn recursive<'s, F: FnMut(ClType)>(
+fn flatten_type<'s, F: FnMut(&Vec<&'s str>, ClType)>(
+    name: &'s str,
+    input_ty: &TypeExpr<'s>,
+    mut handler: F,
+) {
+    if input_ty.is_void() {
+        return;
+    }
+    let mut path = vec![name];
+    fn recursive<'s, F: FnMut(&Vec<&'s str>, ClType)>(
+        path: &mut Vec<&'s str>,
         root: &TypeExprNode<'s>,
-        pool: &TypeExpr<'s>,
+        input_ty: &TypeExpr<'s>,
         handler: &mut F,
     ) {
-        if let Some(cl_ty) = basic_asttype_to_cltype(&root, pool) {
-            handler(cl_ty);
+        if root.is_void() {
+            return;
+        }
+        if let Some(cl_ty) = basic_asttype_to_cltype(&root, input_ty) {
+            handler(&path, cl_ty);
             return;
         }
         match root {
             &TypeExprNode::Slice(ty) => {
-                handler(cl_types::R64);
-                recursive(&pool.pool[ty], pool, handler);
+                path.push("size");
+                handler(&path, cl_types::I64);
+                path.pop();
+                handler(&path, cl_types::R64);
             }
             &TypeExprNode::Array(_, _) => todo!("freeform array length"),
             TypeExprNode::Tuple(children) => {
-                for child in children {
-                    recursive(&pool.pool[*child], pool, handler);
+                for (i, child) in children.iter().enumerate() {
+                    path.push(TUPLE_PATHS[i]);
+                    recursive(path, &input_ty.pool[*child], input_ty, handler);
+                    path.pop();
                 }
             }
             &TypeExprNode::Fn(_, _) => todo!("function pointers"),
@@ -105,9 +128,32 @@ fn flatten_type<'s, F: FnMut(ClType)>(input_ty: &TypeExpr<'s>, mut handler: F) {
     }
 
     if let Some(cl_ty) = basic_asttype_to_cltype(input_ty.root(), &input_ty) {
-        handler(cl_ty)
+        handler(&path, cl_ty)
     } else {
-        recursive(input_ty.root(), &input_ty, &mut handler);
+        recursive(&mut path, &input_ty.root(), &input_ty, &mut handler);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::ast::type_expr::{TypeExpr, TypeExprNode};
+
+    use super::flatten_type;
+
+    #[test]
+    fn test() {
+        let t = TypeExpr {
+            pool: vec![
+                TypeExprNode::I32,
+                TypeExprNode::I32,
+                TypeExprNode::U128,
+                TypeExprNode::Tuple(vec![0, 1, 2]),
+            ],
+            root: 3,
+        };
+        flatten_type("x", &t, |path, cl_ty| {
+            println!("({path:?}, {cl_ty})");
+        });
     }
 }
 
@@ -149,17 +195,21 @@ fn convert_fn_def<'s>(
     symbol_table.add_fn(ast_fn_def.name, ast_fn_def.sign.clone());
     symbol_table.push_layer();
     let mut context = Context::default();
-    let (mut arg_types, mut arg_vars): (Vec<ClType>, HashMap<&str, Vec<MirVarInfo>>) =
+    let (mut arg_types, mut arg_vars): (Vec<ClType>, HashMap<Vec<&str>, MirVarInfo>) =
         Default::default();
     ast_fn_def.sign.args.iter().for_each(|(name, ty)| {
         symbol_table.add_var(*name, PossibleTypes::Known(ty.clone()));
-        let mut var_info = Vec::<MirVarInfo>::new();
-        flatten_type(ty, |cl_ty| {
+        flatten_type(name, ty, |path, dtype| {
             let id = context.suggest_new_var_id();
-            var_info.push((id, cl_ty, false).into());
-            arg_types.push(cl_ty);
+            arg_types.push(dtype);
+
+            let var_info = MirVarInfo {
+                id,
+                dtype,
+                is_mut: false,
+            };
+            arg_vars.insert(path.clone(), var_info);
         });
-        arg_vars.insert(*name, var_info);
     });
     let mut mir_body = MirBlock {
         body: Vec::new(),

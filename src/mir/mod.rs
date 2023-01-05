@@ -82,7 +82,7 @@ pub struct MirFnDef<'s> {
 pub struct MirBlock<'s> {
     pub body: Vec<MirNodeRef<'s>>,
     /// Information of the variables defined in this block
-    pub vars: HashMap<&'s str, Vec<MirVarInfo>>,
+    pub vars: HashMap<Vec<&'s str>, MirVarInfo>,
 }
 
 /// Stores information about a variable

@@ -1,2 +1,2 @@
-fn f(x: []u8) {
+fn f(x: []u8, y: (usize, i128), arr: [8]u8) {
 }
