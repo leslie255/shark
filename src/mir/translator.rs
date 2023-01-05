@@ -107,7 +107,7 @@ fn flatten_type<'s, F: FnMut(&Vec<&'s str>, ClType)>(
             return;
         }
         match root {
-            &TypeExprNode::Slice(ty) => {
+            &TypeExprNode::Slice(_) => {
                 path.push("size");
                 handler(&path, cl_types::I64);
                 path.pop();
@@ -249,10 +249,12 @@ fn convert_block_body<'s>(
     match node {
         AstNode::Call(callee, args) => todo!(),
         AstNode::Let(lhs, ty, rhs) => {
-            let var_id = context.suggest_new_var_id();
-            let ty = ty.as_ref().expect("todo: type infer");
-            symbol_table.add_var(lhs, PossibleTypes::Known(ty.clone()));
-            todo!()
+            let ty = ty.as_ref().unwrap_or_else(|| todo!("type infer"));
+            symbol_table.add_var(&lhs, PossibleTypes::Known(ty.clone()));
+            flatten_type(lhs, ty, |path, ty| {
+                let var_id = context.suggest_new_var_id();
+                target.vars.insert(path.clone(), (var_id, ty, true).into());
+            });
         }
         AstNode::Assign(lhs, rhs) => todo!(),
         AstNode::MathOpAssign(op_kind, lhs, rhs) => todo!(),
@@ -266,6 +268,16 @@ fn convert_block_body<'s>(
         AstNode::Continue => todo!(),
         _ => unimplemented!(),
     }
+}
+
+#[allow(unused_variables)]
+fn convert_assignment<'s>(
+    target: &mut MirBlock<'s>,
+    context: &mut Context,
+    lhs: AstNode<'s>,
+    rhs: AstNode<'s>,
+) {
+    todo!()
 }
 
 /// Context for converting AST into MIR when inside a function
