@@ -1,17 +1,15 @@
+#![allow(dead_code, unused_imports, unused_mut, unused_variables)]
 use std::{collections::HashMap, ops::Deref};
 
 use crate::{
-    ast::{
-        type_expr::{TypeExpr, TypeExprNode},
-        Ast, AstNode, FnDef,
-    },
+    ast::{type_expr::TypeExpr, Ast, AstNode, FnDef},
     checks::symboltable::{PossibleTypes, SymbolTable},
 };
 
 use super::{cl_types, ClType, MirBlock, MirFnDef, MirNode, MirNodeRef, MirProgram, MirVarInfo};
 
-fn basic_asttype_to_cltype<'s>(node: &TypeExprNode<'s>, pool: &TypeExpr<'s>) -> Option<ClType> {
-    use TypeExprNode::*;
+pub(super) fn basic_asttype_to_cltype<'s>(node: &TypeExpr<'s>) -> Option<ClType> {
+    use TypeExpr::*;
     match node {
         U128 | I128 => Some(cl_types::I128),
         USize | ISize | U64 | I64 => Some(cl_types::I64),
@@ -21,8 +19,8 @@ fn basic_asttype_to_cltype<'s>(node: &TypeExprNode<'s>, pool: &TypeExpr<'s>) -> 
         F64 => Some(cl_types::F64),
         F32 => Some(cl_types::F32),
         Ptr(_) | Ref(_) => Some(cl_types::R64),
-        &Array(1, t) => basic_asttype_to_cltype(&pool.pool[t], pool),
-        &Array(2, t) => basic_asttype_to_cltype(&pool.pool[t], pool).map_or(None, |t| match t {
+        Array(1, t) => basic_asttype_to_cltype(t),
+        Array(2, t) => basic_asttype_to_cltype(t).map_or(None, |t| match t {
             cl_types::I32 => Some(cl_types::I32X2),
             cl_types::I64 => Some(cl_types::I64X2),
             cl_types::I128 => Some(cl_types::I128X2),
@@ -30,7 +28,7 @@ fn basic_asttype_to_cltype<'s>(node: &TypeExprNode<'s>, pool: &TypeExpr<'s>) -> 
             cl_types::F64 => Some(cl_types::F64X2),
             _ => None,
         }),
-        &Array(4, t) => basic_asttype_to_cltype(&pool.pool[t], pool).map_or(None, |t| match t {
+        Array(4, t) => basic_asttype_to_cltype(t).map_or(None, |t| match t {
             cl_types::I16 => Some(cl_types::I16X4),
             cl_types::I32 => Some(cl_types::I32X4),
             cl_types::I64 => Some(cl_types::I64X4),
@@ -39,7 +37,7 @@ fn basic_asttype_to_cltype<'s>(node: &TypeExprNode<'s>, pool: &TypeExpr<'s>) -> 
             cl_types::F64 => Some(cl_types::F64X4),
             _ => None,
         }),
-        &Array(8, t) => basic_asttype_to_cltype(&pool.pool[t], pool).map_or(None, |t| match t {
+        Array(8, t) => basic_asttype_to_cltype(t).map_or(None, |t| match t {
             cl_types::I8 => Some(cl_types::I8X8),
             cl_types::I16 => Some(cl_types::I16X8),
             cl_types::I32 => Some(cl_types::I32X8),
@@ -48,19 +46,19 @@ fn basic_asttype_to_cltype<'s>(node: &TypeExprNode<'s>, pool: &TypeExpr<'s>) -> 
             cl_types::F64 => Some(cl_types::F64X8),
             _ => None,
         }),
-        &Array(16, t) => basic_asttype_to_cltype(&pool.pool[t], pool).map_or(None, |t| match t {
+        Array(16, t) => basic_asttype_to_cltype(t).map_or(None, |t| match t {
             cl_types::I8 => Some(cl_types::I8X16),
             cl_types::I16 => Some(cl_types::I16X16),
             cl_types::I32 => Some(cl_types::I32X16),
             cl_types::F32 => Some(cl_types::F32X16),
             _ => None,
         }),
-        &Array(32, t) => basic_asttype_to_cltype(&pool.pool[t], pool).map_or(None, |t| match t {
+        Array(32, t) => basic_asttype_to_cltype(t).map_or(None, |t| match t {
             cl_types::I8 => Some(cl_types::I8X32),
             cl_types::I16 => Some(cl_types::I16X32),
             _ => None,
         }),
-        &Array(64, t) => basic_asttype_to_cltype(&pool.pool[t], pool).map_or(None, |t| match t {
+        Array(64, t) => basic_asttype_to_cltype(t).map_or(None, |t| match t {
             cl_types::I8 => Some(cl_types::I8X64),
             _ => None,
         }),
@@ -68,93 +66,92 @@ fn basic_asttype_to_cltype<'s>(node: &TypeExprNode<'s>, pool: &TypeExpr<'s>) -> 
     }
 }
 
-static TUPLE_PATHS: [&'static str; 32] = [
+pub(super) static TUPLE_PATHS: [&'static str; 32] = [
     "_0", "_1", "_2", "_3", "_4", "_5", "_6", "_7", "_8", "_9", "_10", "_11", "_12", "_13", "_14",
     "_15", "_16", "_17", "_18", "_19", "_20", "_21", "_22", "_23", "_24", "_25", "_26", "_27",
     "_28", "_29", "_30", "_31",
 ];
 
-/// Flatten a type expression into a list of cranelift data types
-///
-/// This function will recursively traverse the type expression and call the
-/// given handler for each concrete type it finds.
-///
-/// # Arguments
-///
-/// * `name` - Name of the variable
-/// * `input_ty` - The type expression to flatten
-/// * `handler` - The handler to call for each basic type found
-fn flatten_type<'s, F: FnMut(&Vec<&'s str>, ClType)>(
-    name: &'s str,
-    input_ty: &TypeExpr<'s>,
-    mut handler: F,
-) {
-    if input_ty.is_void() {
+fn flatten_type<'s>(name: &'s str, ty: &TypeExpr<'s>, mut f: impl FnMut(&Vec<&'s str>, ClType)) {
+    if ty.is_void() {
         return;
     }
     let mut path = vec![name];
-    fn recursive<'s, F: FnMut(&Vec<&'s str>, ClType)>(
+    fn recursive<'s>(
         path: &mut Vec<&'s str>,
-        root: &TypeExprNode<'s>,
-        input_ty: &TypeExpr<'s>,
-        handler: &mut F,
+        ty: &TypeExpr<'s>,
+        f: &mut impl FnMut(&Vec<&'s str>, ClType),
     ) {
-        if root.is_void() {
+        if ty.is_void() {
             return;
         }
-        if let Some(cl_ty) = basic_asttype_to_cltype(&root, input_ty) {
-            handler(&path, cl_ty);
+        if let Some(cl_ty) = basic_asttype_to_cltype(&ty) {
+            f(&path, cl_ty);
             return;
         }
-        match root {
-            &TypeExprNode::Slice(_) => {
+        match ty {
+            TypeExpr::Slice(_) => {
                 path.push("size");
-                handler(&path, cl_types::I64);
+                f(path, cl_types::I64);
                 path.pop();
-                handler(&path, cl_types::R64);
+                f(path, cl_types::R64);
             }
-            &TypeExprNode::Array(_, _) => todo!("freeform array length"),
-            TypeExprNode::Tuple(children) => {
-                for (i, child) in children.iter().enumerate() {
-                    path.push(TUPLE_PATHS[i]);
-                    recursive(path, &input_ty.pool[*child], input_ty, handler);
-                    path.pop();
+            TypeExpr::Array(_, _) => todo!("freeform array"),
+            TypeExpr::Tuple(children) => {
+                if children.len() > 32 {
+                    todo!("tuple with more than 32 children");
                 }
+                children
+                    .iter()
+                    .zip(TUPLE_PATHS)
+                    .for_each(|(child, sub_path)| {
+                        path.push(sub_path);
+                        recursive(path, child, f);
+                        path.pop();
+                    })
             }
-            &TypeExprNode::Fn(_, _) => todo!("function pointers"),
-            &TypeExprNode::TypeName(_) => todo!(),
-            _ => (), // already covered by the earlier `basic_asttype_to_cltype`
+            TypeExpr::Fn(_, _) => todo!(),
+            TypeExpr::TypeName(_) => todo!(),
+            TypeExpr::Struct => todo!(),
+            TypeExpr::Union => todo!(),
+            TypeExpr::Enum => todo!(),
+            _ => unimplemented!(), // covered by `basic_asttype_to_cltype`
         }
     }
 
-    if let Some(cl_ty) = basic_asttype_to_cltype(input_ty.root(), &input_ty) {
-        handler(&path, cl_ty)
+    if let Some(cl_ty) = basic_asttype_to_cltype(ty) {
+        f(&path, cl_ty);
     } else {
-        recursive(&mut path, &input_ty.root(), &input_ty, &mut handler);
+        recursive(&mut path, ty, &mut f);
     }
 }
 
 #[cfg(test)]
-mod tests {
-    use crate::ast::type_expr::{TypeExpr, TypeExprNode};
-
-    use super::flatten_type;
-
-    #[test]
-    fn test() {
-        let t = TypeExpr {
-            pool: vec![
-                TypeExprNode::I32,
-                TypeExprNode::I32,
-                TypeExprNode::U128,
-                TypeExprNode::Tuple(vec![0, 1, 2]),
-            ],
-            root: 3,
-        };
-        flatten_type("x", &t, |path, cl_ty| {
-            println!("({path:?}, {cl_ty})");
+#[test]
+fn test_flatten_ty() {
+    fn test_case<'s>(t: &TypeExpr<'s>, name: &'s str) -> (Vec<Vec<&'s str>>, Vec<ClType>) {
+        let mut paths = Vec::<Vec<&'static str>>::new();
+        let mut flattened = Vec::<ClType>::new();
+        flatten_type(name, &t, |path, ty| {
+            paths.push(path.clone());
+            flattened.push(ty);
         });
+        (paths, flattened)
     }
+    let (paths, flattened) = test_case(&TypeExpr::U128, "test_var");
+    assert_eq!(paths, vec![vec!["test_var"]]);
+    assert_eq!(flattened, vec![cl_types::I128]);
+
+    let (paths, flattened) = test_case(
+        &TypeExpr::Tuple(vec![TypeExpr::U64, TypeExpr::Ptr(Box::new(TypeExpr::U8))]),
+        "test_var",
+    );
+    assert_eq!(paths, vec![vec!["test_var", "_0"], vec!["test_var", "_1"]]);
+    assert_eq!(flattened, vec![cl_types::I64, cl_types::R64]);
+
+    let (paths, flattened) = test_case(&TypeExpr::Slice(Box::new(TypeExpr::U8)), "test_var");
+    assert_eq!(paths, vec![vec!["test_var", "size"], vec!["test_var"]]);
+    assert_eq!(flattened, vec![cl_types::I64, cl_types::R64]);
 }
 
 /// convert an AST into a MIR program
@@ -197,65 +194,20 @@ fn convert_fn_def<'s>(
     let mut context = Context::default();
     let (mut arg_types, mut arg_vars): (Vec<ClType>, HashMap<Vec<&str>, MirVarInfo>) =
         Default::default();
-    ast_fn_def.sign.args.iter().for_each(|(name, ty)| {
-        symbol_table.add_var(*name, PossibleTypes::Known(ty.clone()));
-        flatten_type(name, ty, |path, dtype| {
-            let id = context.suggest_new_var_id();
-            arg_types.push(dtype);
-
-            let var_info = MirVarInfo {
-                id,
-                dtype,
-                is_mut: false,
-            };
-            arg_vars.insert(path.clone(), var_info);
-        });
-    });
-    let mut mir_body = MirBlock {
-        body: Vec::new(),
-        vars: arg_vars,
-    };
-    if let Some(ast_body) = &ast_fn_def.body {
-        for node in ast_body {
-            convert_block_body(
-                node.deref().inner(),
-                symbol_table,
-                &mut mir_body,
-                &mut context,
-            );
-        }
-    }
-    symbol_table.pop_layer();
-    let mir_fn_def = MirFnDef {
-        name: ast_fn_def.name,
-        args: arg_types,
-        ret_type: basic_asttype_to_cltype(
-            ast_fn_def.sign.ret_type.root(),
-            &ast_fn_def.sign.ret_type,
-        ),
-        body: mir_body,
-    };
-    let node_ref = program.add_node(MirNode::FnDef(mir_fn_def));
-    node_ref
+    todo!()
 }
 
 fn convert_block_body<'s>(
     node: &AstNode<'s>,
     symbol_table: &mut SymbolTable<'s>,
+    program: &mut MirProgram<'s>,
     target: &mut MirBlock<'s>,
     context: &mut Context,
 ) {
     #[allow(unused_variables)]
     match node {
         AstNode::Call(callee, args) => todo!(),
-        AstNode::Let(lhs, ty, rhs) => {
-            let ty = ty.as_ref().unwrap_or_else(|| todo!("type infer"));
-            symbol_table.add_var(&lhs, PossibleTypes::Known(ty.clone()));
-            flatten_type(lhs, ty, |path, ty| {
-                let var_id = context.suggest_new_var_id();
-                target.vars.insert(path.clone(), (var_id, ty, true).into());
-            });
-        }
+        AstNode::Let(lhs, ty, rhs) => todo!(),
         AstNode::Assign(lhs, rhs) => todo!(),
         AstNode::MathOpAssign(op_kind, lhs, rhs) => todo!(),
         AstNode::BitOpAssign(op_kind, lhs, rhs) => todo!(),
@@ -272,12 +224,39 @@ fn convert_block_body<'s>(
 
 #[allow(unused_variables)]
 fn convert_assignment<'s>(
+    lhs_path: &Vec<&'s str>,
+    rhs: AstNode<'s>,
     target: &mut MirBlock<'s>,
     context: &mut Context,
-    lhs: AstNode<'s>,
-    rhs: AstNode<'s>,
 ) {
     todo!()
+}
+
+#[allow(dead_code)]
+fn flatten_expr<'s, F: FnMut()>(node: &AstNode<'s>, parent_block: &MirBlock<'s>, handler: F) {
+    match node {
+        &AstNode::Identifier(id) => {}
+        AstNode::Number(..) => todo!(),
+        AstNode::String(..) => todo!(),
+        AstNode::Char(..) => todo!(),
+        AstNode::Bool(..) => todo!(),
+        AstNode::Array(..) => todo!(),
+        AstNode::MathOp(..) => todo!(),
+        AstNode::BitOp(..) => todo!(),
+        AstNode::BoolOp(..) => todo!(),
+        AstNode::Cmp(..) => todo!(),
+        AstNode::MemberAccess(..) => todo!(),
+        AstNode::BitNot(..) => todo!(),
+        AstNode::BoolNot(..) => todo!(),
+        AstNode::MinusNum(..) => todo!(),
+        AstNode::PlusNum(..) => todo!(),
+        AstNode::Call(..) => todo!(),
+        AstNode::TakeRef(..) => todo!(),
+        AstNode::Deref(..) => todo!(),
+        AstNode::Typecast(..) => todo!(),
+        AstNode::Tuple(..) => todo!(),
+        _ => unimplemented!(),
+    }
 }
 
 /// Context for converting AST into MIR when inside a function

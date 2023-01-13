@@ -42,7 +42,6 @@ impl<'src> Ast<'src> {
 }
 
 /// A node inside an AST
-#[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub enum AstNode<'src> {
     // --- Simple things

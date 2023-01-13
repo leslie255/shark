@@ -1,5 +1,5 @@
 use crate::{
-    ast::type_expr::{TypeExpr, TypeExprNode},
+    ast::type_expr::TypeExpr,
     error::{location::SourceLocation, CollectIfErr, Error, ErrorContent},
     token::Token,
 };
@@ -16,22 +16,15 @@ pub fn parse_type_expr<'src>(
     parser: &mut AstParser<'src>,
     current_loc: SourceLocation<'src>,
 ) -> Result<TypeExpr<'src>, Error<'src>> {
-    let mut type_expr = TypeExpr {
-        pool: Vec::new(),
-        root: 0,
-    };
-    let root = parse_type_expr_node(parser, current_loc, 0, &mut type_expr)?;
-    type_expr.root = root;
-    Ok(type_expr)
+    Ok(parse_type_expr_node(parser, current_loc, 0)?)
 }
 
 #[must_use]
-fn parse_type_expr_node<'src>(
-    parser: &mut AstParser<'src>,
-    current_loc: SourceLocation<'src>,
+fn parse_type_expr_node<'s>(
+    parser: &mut AstParser<'s>,
+    current_loc: SourceLocation<'s>,
     recursive_counter: usize,
-    type_expr: &mut TypeExpr<'src>,
-) -> Result<usize, Error<'src>> {
+) -> Result<TypeExpr<'s>, Error<'s>> {
     if recursive_counter >= TYPE_PARSER_RECURSIVE_LIMIT {
         return Err(ErrorContent::TypeExprStackOverflow.wrap(current_loc));
     }
@@ -40,33 +33,31 @@ fn parse_type_expr_node<'src>(
         .next()
         .ok_or(ErrorContent::UnexpectedEOF.wrap(current_loc))?;
     let token_location = next_token.src_loc();
-    let node = match next_token.into_inner() {
-        Token::Identifier("usize") => TypeExprNode::USize,
-        Token::Identifier("isize") => TypeExprNode::ISize,
-        Token::Identifier("u64") => TypeExprNode::U64,
-        Token::Identifier("u128") => TypeExprNode::U128,
-        Token::Identifier("i128") => TypeExprNode::I128,
-        Token::Identifier("u32") => TypeExprNode::U32,
-        Token::Identifier("u16") => TypeExprNode::U16,
-        Token::Identifier("u8") => TypeExprNode::U8,
-        Token::Identifier("i64") => TypeExprNode::I64,
-        Token::Identifier("i32") => TypeExprNode::I32,
-        Token::Identifier("i16") => TypeExprNode::I16,
-        Token::Identifier("i8") => TypeExprNode::I8,
-        Token::Identifier("f64") => TypeExprNode::F64,
-        Token::Identifier("f32") => TypeExprNode::F32,
-        Token::Identifier("char") => TypeExprNode::Char,
-        Token::Identifier("bool") => TypeExprNode::Bool,
-        Token::Identifier(typename) => TypeExprNode::TypeName(typename),
+    Ok(match next_token.into_inner() {
+        Token::Identifier("usize") => TypeExpr::USize,
+        Token::Identifier("isize") => TypeExpr::ISize,
+        Token::Identifier("u64") => TypeExpr::U64,
+        Token::Identifier("u128") => TypeExpr::U128,
+        Token::Identifier("i128") => TypeExpr::I128,
+        Token::Identifier("u32") => TypeExpr::U32,
+        Token::Identifier("u16") => TypeExpr::U16,
+        Token::Identifier("u8") => TypeExpr::U8,
+        Token::Identifier("i64") => TypeExpr::I64,
+        Token::Identifier("i32") => TypeExpr::I32,
+        Token::Identifier("i16") => TypeExpr::I16,
+        Token::Identifier("i8") => TypeExpr::I8,
+        Token::Identifier("f64") => TypeExpr::F64,
+        Token::Identifier("f32") => TypeExpr::F32,
+        Token::Identifier("char") => TypeExpr::Char,
+        Token::Identifier("bool") => TypeExpr::Bool,
+        Token::Identifier(typename) => TypeExpr::TypeName(typename),
         Token::AndOp => {
-            let child_i =
-                parse_type_expr_node(parser, current_loc, recursive_counter + 1, type_expr)?;
-            TypeExprNode::Ref(child_i)
+            let child = parse_type_expr_node(parser, current_loc, recursive_counter + 1)?;
+            TypeExpr::Ref(Box::new(child))
         }
         Token::Mul => {
-            let child_i =
-                parse_type_expr_node(parser, current_loc, recursive_counter + 1, type_expr)?;
-            TypeExprNode::Ptr(child_i)
+            let child = parse_type_expr_node(parser, current_loc, recursive_counter + 1)?;
+            TypeExpr::Ptr(Box::new(child))
         }
         Token::RectParenOpen => {
             let peeked_token = parser
@@ -85,13 +76,9 @@ fn parse_type_expr_node<'src>(
             match peeked_token.inner() {
                 Token::RectParenClose => {
                     parser.token_stream.next();
-                    let child_i = parse_type_expr_node(
-                        parser,
-                        peeked_location,
-                        recursive_counter + 1,
-                        type_expr,
-                    )?;
-                    TypeExprNode::Slice(child_i)
+                    let child =
+                        parse_type_expr_node(parser, peeked_location, recursive_counter + 1)?;
+                    TypeExpr::Slice(Box::new(child))
                 }
                 Token::Number(len) => {
                     let len = len
@@ -110,19 +97,15 @@ fn parse_type_expr_node<'src>(
                     } else {
                         ret_no_closing_paren_err!(peeked_location)
                     }
-                    let child_i = parse_type_expr_node(
-                        parser,
-                        peeked_location,
-                        recursive_counter + 1,
-                        type_expr,
-                    )?;
-                    TypeExprNode::Array(len, child_i)
+                    let child =
+                        parse_type_expr_node(parser, peeked_location, recursive_counter + 1)?;
+                    TypeExpr::Array(len, Box::new(child))
                 }
                 _ => ret_no_closing_paren_err!(peeked_location),
             }
         }
         Token::RoundParenOpen => {
-            let mut children = Vec::<usize>::new();
+            let mut children = Vec::<TypeExpr<'s>>::new();
             loop {
                 let peeked_token = parser
                     .token_stream
@@ -132,8 +115,7 @@ fn parse_type_expr_node<'src>(
                     parser.token_stream.next();
                     break;
                 }
-                let child =
-                    parse_type_expr_node(parser, current_loc, recursive_counter + 1, type_expr)?;
+                let child = parse_type_expr_node(parser, current_loc, recursive_counter + 1)?;
                 // TODO: continue parsing if there is an error
                 children.push(child);
                 let peeked_token = parser
@@ -155,7 +137,7 @@ fn parse_type_expr_node<'src>(
                     }
                 }
             }
-            TypeExprNode::Tuple(children)
+            TypeExpr::Tuple(children)
         }
         Token::Fn => {
             let next_token = parser
@@ -167,7 +149,7 @@ fn parse_type_expr_node<'src>(
                 Token::RoundParenOpen => (),
                 _ => return Err(ErrorContent::ExpectToken(Token::RoundParenOpen).wrap(token_loc)),
             }
-            let mut args = Vec::<usize>::new();
+            let mut args = Vec::<TypeExpr<'s>>::new();
             loop {
                 let peeked_token = parser
                     .token_stream
@@ -177,8 +159,7 @@ fn parse_type_expr_node<'src>(
                     parser.token_stream.next();
                     break;
                 }
-                let child =
-                    parse_type_expr_node(parser, current_loc, recursive_counter + 1, type_expr)?;
+                let child = parse_type_expr_node(parser, current_loc, recursive_counter + 1)?;
                 // TODO: continue parsing if there is an error
                 args.push(child);
                 let peeked_token = parser
@@ -208,20 +189,17 @@ fn parse_type_expr_node<'src>(
                 match peeked_token.inner() {
                     Token::Arrow => {
                         parser.token_stream.next();
-                        parse_type_expr_node(parser, current_loc, recursive_counter + 1, type_expr)?
+                        parse_type_expr_node(parser, current_loc, recursive_counter + 1)?
                     }
                     _ => {
-                        type_expr.pool.push(TypeExprNode::void());
-                        type_expr.pool.len() - 1
+                        TypeExpr::void()
                     }
                 }
             };
-            TypeExprNode::Fn(args, ret_type)
+            TypeExpr::Fn(args, Box::new(ret_type))
         }
         _ => {
             return Err(ErrorContent::InvalidTypeExpr.wrap(token_location));
         }
-    };
-    type_expr.pool.push(node);
-    Ok(type_expr.pool.len() - 1)
+    })
 }

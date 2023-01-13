@@ -1,5 +1,6 @@
 use std::{
     fmt::{Debug, Display},
+    marker::PhantomData,
     ops::Range,
     slice,
 };
@@ -127,7 +128,7 @@ pub struct SourceIndex<'a> {
     /// The index of the character in the string
     pub position: usize,
     /// `SourceIndex` can't live outside of the `S
-    lifetime_lock: &'a (),
+    lifetime_lock: PhantomData<&'a ()>,
 }
 
 impl SourceIndex<'_> {
@@ -218,7 +219,7 @@ impl<'a> Iterator for SourceCharIndices<'a> {
                     raw: raw_index,
                     len,
                     position,
-                    lifetime_lock: &(),
+                    lifetime_lock: PhantomData,
                 },
                 ch,
             ))

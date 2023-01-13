@@ -1,10 +1,12 @@
-#![allow(dead_code)]
-
 pub mod translator;
 
 use std::{collections::HashMap, fmt::Debug, ops::Deref};
 
 pub(self) use cranelift::codegen::ir::{types as cl_types, types::Type as ClType};
+
+use crate::{ast::type_expr::TypeExpr, error::ErrorContent};
+
+use translator::basic_asttype_to_cltype;
 
 /// - ADT expanded into multiple variables with basic types
 /// - Non-direction expressions as function arguments are flattened
@@ -13,6 +15,7 @@ pub(self) use cranelift::codegen::ir::{types as cl_types, types::Type as ClType}
 /// - Variables are turned into ID
 /// - Boolean logic operators and bitwise operators are no longer differentiated
 /// - All typedefs are gone
+#[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub enum MirNode<'s> {
     Identifier(&'s str),
@@ -78,23 +81,87 @@ pub struct MirFnDef<'s> {
 
 /// An array of MIR nodes, with a header containing information about all the variables defined in
 /// this block
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct MirBlock<'s> {
     pub body: Vec<MirNodeRef<'s>>,
     /// Information of the variables defined in this block
-    pub vars: HashMap<Vec<&'s str>, MirVarInfo>,
+    pub vars: HashMap<&'s str, MirVarInfo<'s>>,
+}
+
+impl<'s> MirBlock<'s> {
+    /// Execute a closure for each of the sub var ID in a dot path
+    pub fn for_each_id<P: Iterator<Item = &'s str>, F: FnMut(u64, ClType)>(
+        &self,
+        mut path: P,
+        mut f: F,
+    ) -> Result<(), ErrorContent<'s>> {
+        todo!()
+        //fn recursive<'s>(
+        //    vars: &HashMap<&'s str, MirVarInfo<'s>>,
+        //    current_id: u64,
+        //    current_name: &'s str,
+        //    current_type: &'s TypeExpr,
+        //    path: &mut impl Iterator<Item = &'s str>,
+        //    f: &mut impl FnMut(u64, ClType),
+        //) -> Result<(), ErrorContent<'s>> {
+        //    if let Some(cl_ty) = basic_asttype_to_cltype(var_info.dtype.root(), &var_info.dtype) {
+        //        f(current_id, cl_ty);
+        //    } else {
+        //        use crate::ast::type_expr::TypeExprNode::*;
+        //        match current_type.root() {
+        //            Slice(_) => {
+        //                f(current_id, cl_types::I64);
+        //                f(current_id + 1, cl_types::R64);
+        //            }
+        //            Array(_, _) => todo!("freeform array"),
+        //            Tuple(children) => match path.next() {
+        //                Some(node) => todo!(),
+        //                None => {
+        //                    for (i, &child) in children.iter().enumerate() {
+        //                        let child = &current_type.pool[child];
+        //                        recursive(
+        //                            vars,
+        //                            current_id + (i as u64),
+        //                            child,
+        //                            translator::TUPLE_PATHS[i],
+        //                            path,
+        //                            f,
+        //                        )?;
+        //                    }
+        //                }
+        //            },
+        //            Fn(_, _) => todo!(),
+        //            TypeName(_) => todo!(),
+        //            Struct => todo!(),
+        //            Union => todo!(),
+        //            Enum => todo!(),
+        //            _ => unimplemented!(), // already covered by `basic_asttype_to_cltype`
+        //        }
+        //    }
+        //    Ok(())
+        //}
+
+        //let root_name = path.next().ok_or(ErrorContent::InvalidMemberAccess)?;
+        //let root_id = self
+        //    .vars
+        //    .get(root_name)
+        //    .ok_or(ErrorContent::InvalidMemberAccess)?
+        //    .id;
+        //recursive(&self.vars, root_id, root_name, &mut path, &mut f)?;
+        //Ok(())
+    }
 }
 
 /// Stores information about a variable
 #[derive(Debug, Clone)]
-pub struct MirVarInfo {
+pub struct MirVarInfo<'s> {
     pub id: u64,
-    pub dtype: ClType,
+    pub dtype: TypeExpr<'s>,
     pub is_mut: bool,
 }
 
-impl From<(u64, ClType, bool)> for MirVarInfo {
-    fn from((id, dtype, is_mut): (u64, ClType, bool)) -> Self {
+impl<'s> From<(u64, TypeExpr<'s>, bool)> for MirVarInfo<'s> {
+    fn from((id, dtype, is_mut): (u64, TypeExpr<'s>, bool)) -> Self {
         Self { id, dtype, is_mut }
     }
 }

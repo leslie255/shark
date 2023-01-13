@@ -16,8 +16,8 @@ use crate::{
 use self::type_parser::parse_type_expr;
 
 use super::{
-    type_expr::{TypeExpr, TypeExprNode},
-    Ast, AstNode, AstNodeRef, EnumDef, FnDef, FnSignature, IfExpr, MathOpKind, StructOrUnionDef,
+    type_expr::TypeExpr, Ast, AstNode, AstNodeRef, EnumDef, FnDef, FnSignature, IfExpr, MathOpKind,
+    StructOrUnionDef,
 };
 
 /// Owns a `TokenStream` and parses it into AST incrementally
@@ -866,7 +866,7 @@ impl<'src> AstParser<'src> {
                 end_loc = peeked_location.range.1;
                 parse_type_expr(self, peeked_location).collect_err(self.err_collector)?
             }
-            &Token::BraceOpen | &Token::Semicolon | &Token::Comma => TypeExprNode::void().wrap(),
+            &Token::BraceOpen | &Token::Semicolon | &Token::Comma => TypeExpr::void(),
             _ => todo!("error"),
         };
         let peeked_token = next_token!(self, peeked_location);

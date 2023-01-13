@@ -49,6 +49,9 @@ pub enum ErrorContent<'src> {
     ExprNotAllowedAtTopLevel,
     ExprNotAllowedAsFnBody,
     ExprNotAllowedAsChild,
+
+    // -- Type checker error
+    InvalidMemberAccess,
 }
 impl<'src> ErrorContent<'src> {
     #[must_use]
@@ -87,6 +90,7 @@ impl<'src> ErrorContent<'src> {
             Self::ExprNotAllowedAtTopLevel => "expression not allowed at top level",
             Self::ExprNotAllowedAsFnBody => "expression not allowed as function body",
             Self::ExprNotAllowedAsChild => "expression is not allowed as child",
+            Self::InvalidMemberAccess => "invalid member access",
         }
     }
     fn description(&self) -> String {
@@ -131,6 +135,7 @@ impl<'src> ErrorContent<'src> {
             Self::ExprNotAllowedAtTopLevel => "Consider wrapping this into a function".to_string(),
             Self::ExprNotAllowedAsFnBody => "This expression is allowed as a statement in function body".to_string(),
             Self::ExprNotAllowedAsChild => "This expression is not allowed here".to_string(),
+            Self::InvalidMemberAccess => "No such path exists".to_string(),
         }
     }
 }

@@ -1,79 +1,9 @@
 use std::fmt::{Debug, Display, Formatter};
 
-use crate::checks::symboltable::SymbolTable;
+use crate::checks::symboltable::{PossibleTypes, SymbolTable};
 
 #[derive(Clone)]
-pub struct TypeExpr<'a> {
-    pub pool: Vec<TypeExprNode<'a>>,
-    pub root: usize,
-}
-impl<'a> TypeExpr<'a> {
-    #[inline]
-    pub fn is_void(&self) -> bool {
-        match self.root() {
-            TypeExprNode::Tuple(ref nodes) => nodes.is_empty(),
-            _ => false,
-        }
-    }
-
-    #[inline]
-    pub fn root(&self) -> &TypeExprNode<'a> {
-        &self.pool[self.root]
-    }
-
-    #[inline]
-    pub fn is_numeric(&self, symbol_table: &SymbolTable<'a>) -> bool {
-        use TypeExprNode::*;
-        match self.root() {
-            U128 | I128 | USize | ISize | U64 | U32 | U16 | U8 | I64 | I32 | I16 | I8 => true,
-            &TypeName(typename) => symbol_table
-                .typename(typename)
-                .map_or(false, |t| t.is_numeric(symbol_table)),
-            _ => false,
-        }
-    }
-
-    #[inline]
-    pub fn is_signed_numeric(&self, symbol_table: &SymbolTable<'a>) -> bool {
-        use TypeExprNode::*;
-        match self.root() {
-            U128 | I128 | ISize | I64 | I32 | I16 | I8 | F64 | F32 => true,
-            &TypeName(typename) => symbol_table
-                .typename(typename)
-                .map_or(false, |t| t.is_signed_numeric(symbol_table)),
-            _ => false,
-        }
-    }
-
-    #[inline]
-    pub fn is_float(&self, symbol_table: &SymbolTable<'a>) -> bool {
-        use TypeExprNode::*;
-        match self.root() {
-            F64 | F32 => true,
-            &TypeName(typename) => symbol_table
-                .typename(typename)
-                .map_or(false, |t| t.is_float(symbol_table)),
-            _ => false,
-        }
-    }
-
-    pub fn eq(lhs: &Self, rhs: &Self, symbol_table: &SymbolTable<'a>) -> bool {
-        TypeExprNode::eq(lhs, rhs, lhs.root(), rhs.root(), symbol_table)
-    }
-}
-impl<'a> Display for TypeExpr<'a> {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        self.root().fmt(&self.pool, f)
-    }
-}
-impl<'a> Debug for TypeExpr<'a> {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        self.root().fmt(&self.pool, f)
-    }
-}
-
-#[derive(Clone)]
-pub enum TypeExprNode<'a> {
+pub enum TypeExpr<'s> {
     USize,
     ISize,
     U128,
@@ -91,17 +21,17 @@ pub enum TypeExprNode<'a> {
     Char,
     Bool,
 
-    Ptr(usize),
-    Ref(usize),
-    Slice(usize),
+    Ptr(Box<Self>),
+    Ref(Box<Self>),
+    Slice(Box<Self>),
     /// length, child node
-    Array(u64, usize),
-    Tuple(Vec<usize>),
+    Array(u64, Box<Self>),
+    Tuple(Vec<Self>),
 
     /// arg types, ret type
-    Fn(Vec<usize>, usize),
+    Fn(Vec<Self>, Box<Self>),
 
-    TypeName(&'a str),
+    TypeName(&'s str),
 
     #[allow(dead_code)]
     Struct,
@@ -110,7 +40,7 @@ pub enum TypeExprNode<'a> {
     #[allow(dead_code)]
     Enum,
 }
-impl<'a> TypeExprNode<'a> {
+impl<'s> TypeExpr<'s> {
     /// A shorthand for creating the `()` empty tuple type
     #[inline]
     #[must_use]
@@ -125,7 +55,65 @@ impl<'a> TypeExprNode<'a> {
         }
     }
 
-    fn fmt(&self, pool: &Vec<TypeExprNode<'_>>, f: &mut Formatter<'_>) -> std::fmt::Result {
+    pub fn is_numeric(&self, symbol_table: &SymbolTable<'s>) -> bool {
+        match self {
+            Self::USize
+            | Self::ISize
+            | Self::U128
+            | Self::U64
+            | Self::U32
+            | Self::U16
+            | Self::U8
+            | Self::I128
+            | Self::I64
+            | Self::I32
+            | Self::I16
+            | Self::I8
+            | Self::F64
+            | Self::F32 => true,
+            &Self::TypeName(name) => symbol_table.var_type(name).map_or(false, |t| match t {
+                PossibleTypes::IntNumeric => true,
+                PossibleTypes::NegativeIntNumeric => true,
+                PossibleTypes::FloatNumeric => true,
+                PossibleTypes::Known(t) => t.is_numeric(symbol_table),
+            }),
+            _ => false,
+        }
+    }
+
+    pub fn is_signed_numeric(&self, symbol_table: &SymbolTable<'s>) -> bool {
+        match self {
+            Self::ISize
+            | Self::I128
+            | Self::I64
+            | Self::I32
+            | Self::I16
+            | Self::I8 => true,
+            &Self::TypeName(name) => symbol_table.var_type(name).map_or(false, |t| match t {
+                PossibleTypes::IntNumeric => true,
+                PossibleTypes::NegativeIntNumeric => true,
+                PossibleTypes::FloatNumeric => true,
+                PossibleTypes::Known(t) => t.is_signed_numeric(symbol_table),
+            }),
+            _ => false,
+        }
+    }
+
+    pub fn is_float_numeric(&self, symbol_table: &SymbolTable<'s>) -> bool {
+        match self {
+            Self::F64 | Self::F32 => true,
+            &Self::TypeName(name) => symbol_table.var_type(name).map_or(false, |t| match t {
+                PossibleTypes::IntNumeric => false,
+                PossibleTypes::NegativeIntNumeric => false,
+                PossibleTypes::FloatNumeric => true,
+                PossibleTypes::Known(t) => t.is_float_numeric(symbol_table),
+            }),
+            _ => false,
+        }
+    }
+}
+impl Debug for TypeExpr<'_> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::USize => write!(f, "usize")?,
             Self::ISize => write!(f, "isize")?,
@@ -143,47 +131,32 @@ impl<'a> TypeExprNode<'a> {
             Self::F32 => write!(f, "f32")?,
             Self::Char => write!(f, "char")?,
             Self::Bool => write!(f, "bool")?,
-            Self::Ptr(child_i) => {
-                write!(f, "*")?;
-                pool[*child_i].fmt(pool, f)?;
-            }
-            Self::Ref(child_i) => {
-                write!(f, "&")?;
-                pool[*child_i].fmt(pool, f)?;
-            }
-            Self::Slice(child_i) => {
-                write!(f, "[]")?;
-                pool[*child_i].fmt(pool, f)?;
-            }
-            Self::Array(len, child_i) => {
-                write!(f, "[{}]", len)?;
-                pool[*child_i].fmt(pool, f)?;
-            }
+            Self::Ptr(child) => write!(f, "*{:?}", child)?,
+            Self::Ref(child) => write!(f, "&{:?}", child)?,
+            Self::Slice(child) => write!(f, "[]{:?}", child)?,
+            Self::Array(len, child) => write!(f, "[{}]{:?}", len, child)?,
             Self::Tuple(children) => {
                 write!(f, "(")?;
                 let child_count = children.len();
                 match child_count {
                     0 => (),
                     1 => {
-                        let node = &pool[children[0]];
-                        node.fmt(pool, f)?;
+                        unsafe { children.get_unchecked(0) }.fmt(f)?;
                     }
                     _ => {
                         if f.alternate() {
                             for node in children[0..child_count - 1].iter() {
-                                let node = &pool[*node];
-                                node.fmt(pool, f)?;
+                                node.fmt(f)?;
                                 write!(f, ", ")?;
                             }
                         } else {
                             for node in children[0..child_count - 1].iter() {
-                                let node = &pool[*node];
-                                node.fmt(pool, f)?;
+                                node.fmt(f)?;
                                 write!(f, ",")?;
                             }
                         }
-                        let &last_i = unsafe { children.last().unwrap_unchecked() };
-                        pool[last_i].fmt(pool, f)?;
+                        let last = unsafe { children.last().unwrap_unchecked() };
+                        last.fmt(f)?;
                     }
                 }
                 write!(f, ")")?;
@@ -194,25 +167,22 @@ impl<'a> TypeExprNode<'a> {
                 match arg_count {
                     0 => (),
                     1 => {
-                        let node = &pool[arg_types[0]];
-                        node.fmt(pool, f)?;
+                        Debug::fmt(&unsafe { arg_types.get_unchecked(0) }, f)?;
                     }
                     _ => {
                         if f.alternate() {
-                            for arg in arg_types[0..arg_count - 1].iter() {
-                                let node = &pool[*arg];
-                                node.fmt(pool, f)?;
+                            for arg_type in arg_types[0..arg_count - 1].iter() {
+                                Debug::fmt(&arg_type, f)?;
                                 write!(f, ", ")?;
                             }
                         } else {
-                            for arg in arg_types[0..arg_count - 1].iter() {
-                                let node = &pool[*arg];
-                                node.fmt(pool, f)?;
+                            for arg_type in arg_types[0..arg_count - 1].iter() {
+                                Debug::fmt(&arg_type, f)?;
                                 write!(f, ",")?;
                             }
                         }
-                        let &last_i = unsafe { arg_types.last().unwrap_unchecked() };
-                        pool[last_i].fmt(pool, f)?;
+                        let last = unsafe { arg_types.last().unwrap_unchecked() };
+                        Debug::fmt(&last, f)?;
                     }
                 }
                 write!(f, ")")?;
@@ -221,7 +191,7 @@ impl<'a> TypeExprNode<'a> {
                 } else {
                     write!(f, " -> ")?;
                 }
-                pool[*ret_type].fmt(pool, f)?;
+                Debug::fmt(&ret_type, f)?;
             }
             Self::TypeName(name) => Display::fmt(&name.escape_default(), f)?,
             Self::Struct => write!(f, "{{STRUCT}}")?,
@@ -230,122 +200,82 @@ impl<'a> TypeExprNode<'a> {
         }
         Ok(())
     }
-
-    /// Wrap the `TypeExprNode` into a `TypeExpr` with only one node
-    #[inline]
-    #[must_use]
-    pub fn wrap(self) -> TypeExpr<'a> {
-        TypeExpr {
-            pool: vec![self],
-            root: 0,
-        }
-    }
-
-    pub fn eq(
-        lhs_pool: &TypeExpr<'a>,
-        rhs_pool: &TypeExpr<'a>,
-        lhs: &Self,
-        rhs: &Self,
-        symbol_table: &SymbolTable<'a>,
-    ) -> bool {
+}
+impl<'s> TypeExpr<'s> {
+    pub fn eq(lhs: &Self, rhs: &Self, symbol_table: &SymbolTable<'s>) -> bool {
         match (lhs, rhs) {
-            (TypeExprNode::USize, TypeExprNode::USize)
-            | (TypeExprNode::ISize, TypeExprNode::ISize)
-            | (TypeExprNode::U128, TypeExprNode::U128)
-            | (TypeExprNode::I128, TypeExprNode::I128)
-            | (TypeExprNode::U64, TypeExprNode::U64)
-            | (TypeExprNode::U32, TypeExprNode::U32)
-            | (TypeExprNode::U16, TypeExprNode::U16)
-            | (TypeExprNode::U8, TypeExprNode::U8)
-            | (TypeExprNode::I64, TypeExprNode::I64)
-            | (TypeExprNode::I32, TypeExprNode::I32)
-            | (TypeExprNode::I16, TypeExprNode::I16)
-            | (TypeExprNode::I8, TypeExprNode::I8)
-            | (TypeExprNode::F64, TypeExprNode::F64)
-            | (TypeExprNode::F32, TypeExprNode::F32)
-            | (TypeExprNode::Char, TypeExprNode::Char)
-            | (TypeExprNode::Bool, TypeExprNode::Bool) => true,
-            (&TypeExprNode::Ptr(lhs), &TypeExprNode::Ptr(rhs))
-            | (&TypeExprNode::Ref(lhs), &TypeExprNode::Ref(rhs))
-            | (&TypeExprNode::Slice(lhs), &TypeExprNode::Slice(rhs)) => Self::eq(
-                lhs_pool,
-                rhs_pool,
-                &lhs_pool.pool[lhs],
-                &rhs_pool.pool[rhs],
-                symbol_table,
-            ),
-            (&TypeExprNode::Array(lhs_len, lhs), &TypeExprNode::Array(rhs_len, rhs)) => {
-                lhs_len == rhs_len
-                    && Self::eq(
-                        lhs_pool,
-                        rhs_pool,
-                        &lhs_pool.pool[lhs],
-                        &rhs_pool.pool[rhs],
-                        symbol_table,
-                    )
+            (TypeExpr::USize, TypeExpr::USize)
+            | (TypeExpr::ISize, TypeExpr::ISize)
+            | (TypeExpr::U128, TypeExpr::U128)
+            | (TypeExpr::I128, TypeExpr::I128)
+            | (TypeExpr::U64, TypeExpr::U64)
+            | (TypeExpr::U32, TypeExpr::U32)
+            | (TypeExpr::U16, TypeExpr::U16)
+            | (TypeExpr::U8, TypeExpr::U8)
+            | (TypeExpr::I64, TypeExpr::I64)
+            | (TypeExpr::I32, TypeExpr::I32)
+            | (TypeExpr::I16, TypeExpr::I16)
+            | (TypeExpr::I8, TypeExpr::I8)
+            | (TypeExpr::F64, TypeExpr::F64)
+            | (TypeExpr::F32, TypeExpr::F32)
+            | (TypeExpr::Char, TypeExpr::Char)
+            | (TypeExpr::Bool, TypeExpr::Bool) => true,
+            (TypeExpr::Ptr(lhs), TypeExpr::Ptr(rhs))
+            | (TypeExpr::Ref(lhs), TypeExpr::Ref(rhs))
+            | (TypeExpr::Slice(lhs), TypeExpr::Slice(rhs)) => Self::eq(lhs, rhs, symbol_table),
+            (TypeExpr::Array(lhs_len, lhs), TypeExpr::Array(rhs_len, rhs)) => {
+                lhs_len == rhs_len && Self::eq(lhs, rhs, symbol_table)
             }
-            (TypeExprNode::Tuple(lhs_children), TypeExprNode::Tuple(rhs_children)) => lhs_children
-                .iter()
-                .zip(rhs_children)
-                .map(|(&lhs_i, &rhs_i)| (&lhs_pool.pool[lhs_i], &rhs_pool.pool[rhs_i]))
-                .find(|(lhs, rhs)| !Self::eq(lhs_pool, rhs_pool, lhs, rhs, symbol_table))
-                .is_none(),
-            (TypeExprNode::Fn(lhs_args, lhs_ret), TypeExprNode::Fn(rhs_args, rhs_ret)) => {
-                Self::eq(
-                    lhs_pool,
-                    rhs_pool,
-                    &lhs_pool.pool[*lhs_ret],
-                    &rhs_pool.pool[*rhs_ret],
-                    symbol_table,
-                ) && lhs_args
-                    .iter()
-                    .zip(rhs_args)
-                    .map(|(&lhs_i, &rhs_i)| (&lhs_pool.pool[lhs_i], &rhs_pool.pool[rhs_i]))
-                    .find(|(lhs, rhs)| !Self::eq(lhs_pool, rhs_pool, lhs, rhs, symbol_table))
-                    .is_none()
+            (TypeExpr::Tuple(lhs_children), TypeExpr::Tuple(rhs_children)) => {
+                lhs_children.len() == rhs_children.len()
+                    && lhs_children
+                        .iter()
+                        .zip(rhs_children)
+                        .find(|&(lhs, rhs)| !Self::eq(lhs, rhs, symbol_table))
+                        .is_none()
             }
-            (&TypeExprNode::TypeName(lhs_name), &TypeExprNode::TypeName(rhs_name)) => {
+            (TypeExpr::Fn(lhs_args, lhs_ret), TypeExpr::Fn(rhs_args, rhs_ret)) => {
+                lhs_args.len() == rhs_args.len()
+                    && Self::eq(lhs_ret, rhs_ret, symbol_table)
+                    && lhs_args
+                        .iter()
+                        .zip(rhs_args)
+                        .find(|&(lhs, rhs)| !Self::eq(lhs, rhs, symbol_table))
+                        .is_none()
+            }
+            (&TypeExpr::TypeName(lhs_name), &TypeExpr::TypeName(rhs_name)) => {
                 if lhs_name == rhs_name {
                     return true;
                 }
-                let lhs_pool = match symbol_table.typename(lhs_name) {
+                let lhs = match symbol_table.typename(lhs_name) {
                     Some(t) => t,
                     None => return false,
                 };
-                let rhs_pool = match symbol_table.typename(rhs_name) {
+                let rhs = match symbol_table.typename(rhs_name) {
                     Some(t) => t,
                     None => return false,
                 };
-                Self::eq(
-                    lhs_pool,
-                    rhs_pool,
-                    lhs_pool.root(),
-                    rhs_pool.root(),
-                    symbol_table,
-                )
+                Self::eq(lhs, rhs, symbol_table)
             }
-            (&TypeExprNode::TypeName(lhs_name), rhs) => {
-                let lhs_pool = match symbol_table.typename(lhs_name) {
+            (&TypeExpr::TypeName(lhs_name), rhs) => {
+                let lhs = match symbol_table.typename(lhs_name) {
                     Some(t) => t,
                     None => return false,
                 };
-                Self::eq(lhs_pool, rhs_pool, lhs_pool.root(), rhs, symbol_table)
+                Self::eq(lhs, rhs, symbol_table)
             }
-            (lhs, TypeExprNode::TypeName(rhs_name)) => {
-                let rhs_pool = match symbol_table.typename(rhs_name) {
+            (lhs, &TypeExpr::TypeName(rhs_name)) => {
+                let rhs = match symbol_table.typename(rhs_name) {
                     Some(t) => t,
                     None => return false,
                 };
-                Self::eq(lhs_pool, rhs_pool, lhs, rhs_pool.root(), symbol_table)
+                Self::eq(lhs, rhs, symbol_table)
             }
-            (TypeExprNode::Struct, TypeExprNode::Struct)
-            | (TypeExprNode::Union, TypeExprNode::Union)
-            | (TypeExprNode::Enum, TypeExprNode::Enum) => {
-                // cases where type names equals should've already returned `true`, so
-                // this should never be reached
-                unimplemented!()
+            _ => {
+                false
+                // struct, union or enum are always used through type names, if the type names are
+                // equal then it should return true in earlier branches
             }
-            _ => false,
         }
     }
 }

@@ -1,7 +1,7 @@
 use std::collections::hash_map::Entry;
 use std::collections::HashMap;
 
-use crate::ast::type_expr::{TypeExpr, TypeExprNode};
+use crate::ast::type_expr::TypeExpr;
 use crate::ast::FnSignature;
 
 /// Some expression can have multiple possible types, this type keeps track of these types and can
@@ -18,9 +18,9 @@ impl<'src> PossibleTypes<'src> {
     /// Suggest a default type from all the possible types
     pub fn default_type(self) -> TypeExpr<'src> {
         match self {
-            PossibleTypes::IntNumeric => TypeExprNode::I32.wrap(),
-            PossibleTypes::NegativeIntNumeric => TypeExprNode::I32.wrap(),
-            PossibleTypes::FloatNumeric => TypeExprNode::F64.wrap(),
+            PossibleTypes::IntNumeric => TypeExpr::I32,
+            PossibleTypes::NegativeIntNumeric => TypeExpr::I32,
+            PossibleTypes::FloatNumeric => TypeExpr::F64,
             PossibleTypes::Known(t) => t.clone(),
         }
     }
@@ -30,7 +30,7 @@ impl<'src> PossibleTypes<'src> {
         match self {
             PossibleTypes::IntNumeric => t.is_numeric(symbol_table),
             PossibleTypes::NegativeIntNumeric => t.is_signed_numeric(symbol_table),
-            PossibleTypes::FloatNumeric => t.is_float(symbol_table),
+            PossibleTypes::FloatNumeric => t.is_float_numeric(symbol_table),
             PossibleTypes::Known(t0) => TypeExpr::eq(t0, t, symbol_table),
         }
     }
