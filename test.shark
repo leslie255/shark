@@ -1,3 +1,10 @@
+typedef c_int = i32;
+
+struct Stuff {
+    a: u32,
+    b: f64,
+}
+
 fn main(argc: u32, argv: *u8) -> i32 {
     let a: i32 = 255;
     printf("hello, world\n");

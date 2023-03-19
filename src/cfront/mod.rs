@@ -4,7 +4,7 @@ use std::{
 };
 
 use crate::{
-    ast::{parser::AstParser, type_expr::TypeExpr, AstNode, AstNodeRef, FnDef},
+    ast::{parser::AstParser, type_expr::TypeExpr, AstNode, AstNodeRef, FnDef, StructOrUnionDef},
     token::NumValue,
 };
 
@@ -25,7 +25,7 @@ fn quick_hash_str(s: &str) -> u64 {
     hasher.finish()
 }
 
-fn gen_code_for_ty(target: &mut impl io::Write, ty: &TypeExpr<'_>) -> io::Result<()> {
+fn codegen_ty(target: &mut impl io::Write, ty: &TypeExpr<'_>) -> io::Result<()> {
     match ty {
         TypeExpr::USize => write!(target, "size_t"),
         TypeExpr::ISize => write!(target, "ssize_t"),
@@ -44,7 +44,7 @@ fn gen_code_for_ty(target: &mut impl io::Write, ty: &TypeExpr<'_>) -> io::Result
         TypeExpr::Char => write!(target, "uint32_t"),
         TypeExpr::Bool => write!(target, "uint8_t"),
         TypeExpr::Ptr(ty) | TypeExpr::Ref(ty) => {
-            gen_code_for_ty(target, ty.as_ref())?;
+            codegen_ty(target, ty.as_ref())?;
             write!(target, "*")
         }
         TypeExpr::Slice(_) => todo!("slice type"),
@@ -52,7 +52,7 @@ fn gen_code_for_ty(target: &mut impl io::Write, ty: &TypeExpr<'_>) -> io::Result
         TypeExpr::Tuple(fields) if fields.is_empty() => write!(target, "void"),
         TypeExpr::Tuple(_) => todo!("tuple type"),
         TypeExpr::Fn(_, _) => todo!("function pointer type"),
-        TypeExpr::TypeName(_) => todo!("type name type"),
+        TypeExpr::TypeName(id) => codegen_id(target, id),
         TypeExpr::Struct => todo!("struct"),
         TypeExpr::Union => todo!("union"),
         TypeExpr::Enum => todo!("enum"),
@@ -60,7 +60,7 @@ fn gen_code_for_ty(target: &mut impl io::Write, ty: &TypeExpr<'_>) -> io::Result
 }
 
 #[inline]
-fn gen_code_for_id(target: &mut impl io::Write, id: &str) -> io::Result<()> {
+fn codegen_id(target: &mut impl io::Write, id: &str) -> io::Result<()> {
     if is_c_keyword(id) {
         write!(target, "id{}___{}", id, quick_hash_str(id))
     } else {
@@ -69,49 +69,49 @@ fn gen_code_for_id(target: &mut impl io::Write, id: &str) -> io::Result<()> {
 }
 
 #[inline]
-fn gen_code_for_num(target: &mut impl io::Write, num: NumValue) -> io::Result<()> {
+fn codegen_num(target: &mut impl io::Write, num: NumValue) -> io::Result<()> {
     write!(target, "{:?}", num)
 }
 
 #[inline]
-fn gen_code_for_bool(target: &mut impl io::Write, val: bool) -> io::Result<()> {
+fn codegen_bool(target: &mut impl io::Write, val: bool) -> io::Result<()> {
     write!(target, "{}", if val { 1 } else { 0 })
 }
 
 #[inline]
-fn gen_code_for_char(target: &mut impl io::Write, val: char) -> io::Result<()> {
+fn codegen_char(target: &mut impl io::Write, val: char) -> io::Result<()> {
     write!(target, "{}", u32::from(val))
 }
 
 #[inline]
-fn gen_code_for_let<'s>(
+fn codegen_let<'s>(
     target: &mut impl io::Write,
     lhs: &'s str,
     ty: Option<&TypeExpr<'s>>,
     rhs: Option<AstNodeRef<'s>>,
 ) -> io::Result<()> {
     let ty = ty.expect("type infer is unimplemented");
-    gen_code_for_ty(target, ty)?;
+    codegen_ty(target, ty)?;
     write!(target, " ")?;
-    gen_code_for_id(target, lhs)?;
+    codegen_id(target, lhs)?;
     if let Some(rhs_node) = rhs.map(|n| n.as_ref().inner()) {
         write!(target, " = ")?;
-        gen_code_for_node(target, rhs_node)?;
+        codegen_node(target, rhs_node)?;
     } else {
     }
     Ok(())
 }
 
 #[inline]
-fn gen_code_for_fn_def<'s>(target: &mut impl io::Write, fn_def: &FnDef<'s>) -> io::Result<()> {
-    gen_code_for_ty(target, &fn_def.sign.ret_type)?;
+fn codegen_fn_def<'s>(target: &mut impl io::Write, fn_def: &FnDef<'s>) -> io::Result<()> {
+    codegen_ty(target, &fn_def.sign.ret_type)?;
     write!(target, " ")?;
-    gen_code_for_id(target, fn_def.name)?;
+    codegen_id(target, fn_def.name)?;
     write!(target, "(")?;
     for (i, (arg_name, arg_ty)) in fn_def.sign.args.iter().enumerate() {
-        gen_code_for_ty(target, arg_ty)?;
+        codegen_ty(target, arg_ty)?;
         write!(target, " ")?;
-        gen_code_for_id(target, *arg_name)?;
+        codegen_id(target, *arg_name)?;
         if i < fn_def.sign.args.len() - 1 {
             write!(target, ",")?;
         }
@@ -121,7 +121,7 @@ fn gen_code_for_fn_def<'s>(target: &mut impl io::Write, fn_def: &FnDef<'s>) -> i
         Some(ref body) => {
             write!(target, "{{")?;
             for n in body {
-                gen_code_for_node(target, n.as_ref().inner())?;
+                codegen_node(target, n.as_ref().inner())?;
                 write!(target, ";")?;
             }
             write!(target, "}}")?;
@@ -132,27 +132,25 @@ fn gen_code_for_fn_def<'s>(target: &mut impl io::Write, fn_def: &FnDef<'s>) -> i
 }
 
 #[inline]
-fn gen_code_for_ret<'s>(
-    target: &mut impl io::Write,
-    child: Option<AstNodeRef<'_>>,
-) -> io::Result<()> {
+fn codegen_ret<'s>(target: &mut impl io::Write, child: Option<AstNodeRef<'_>>) -> io::Result<()> {
     write!(target, "return ")?;
     match child {
-        Some(child) => gen_code_for_node(target, child.as_ref().inner())?,
+        Some(child) => codegen_node(target, child.as_ref().inner())?,
         None => (),
     }
     Ok(())
 }
 
-fn gen_code_for_call(
+#[inline]
+fn codegen_call(
     target: &mut impl io::Write,
     callee: &AstNode,
     args: &Vec<AstNodeRef>,
 ) -> io::Result<()> {
-    gen_code_for_node(target, callee)?;
+    codegen_node(target, callee)?;
     write!(target, "(")?;
     for (i, arg_node) in args.iter().enumerate() {
-        gen_code_for_node(target, arg_node.as_ref().inner())?;
+        codegen_node(target, arg_node.as_ref().inner())?;
         if i < args.len() - 1 {
             write!(target, ",")?;
         }
@@ -161,23 +159,67 @@ fn gen_code_for_call(
     Ok(())
 }
 
-fn gen_code_for_str_literal(target: &mut impl io::Write, s: *const str) -> io::Result<()> {
+#[inline]
+fn codegen_str(target: &mut impl io::Write, s: *const str) -> io::Result<()> {
     write!(target, "{:?}", unsafe { s.as_ref().unwrap() })
 }
 
-fn gen_code_for_node(target: &mut impl io::Write, node: &AstNode) -> io::Result<()> {
+/// Because `struct` and `union` definition syntax are so similar in C, this function is in charge
+/// of generation `NAME {field0:ty0;field1:ty1; ... }` right after the `struct` or `union` keyword
+#[inline]
+fn codegen_struct_union_name_and_body(
+    target: &mut impl io::Write,
+    def: &StructOrUnionDef,
+) -> io::Result<()> {
+    codegen_id(target, def.name)?;
+    write!(target, "{{")?;
+    for (id, ty) in &def.fields {
+        codegen_ty(target, ty)?;
+        write!(target, " ")?;
+        codegen_id(target, id)?;
+        write!(target, ";")?;
+    }
+    write!(target, "}}")?;
+    codegen_id(target, def.name)?;
+    write!(target, ";")?;
+    Ok(())
+}
+
+#[inline]
+fn codegen_struct_def(target: &mut impl io::Write, def: &StructOrUnionDef) -> io::Result<()> {
+    write!(target, "typedef struct ")?;
+    codegen_struct_union_name_and_body(target, def)
+}
+
+#[inline]
+fn codegen_union_def(target: &mut impl io::Write, def: &StructOrUnionDef) -> io::Result<()> {
+    write!(target, "typedef union ")?;
+    codegen_struct_union_name_and_body(target, def)
+}
+
+#[inline]
+fn codegen_typedef(target: &mut impl io::Write, id: &str, ty: &TypeExpr) -> io::Result<()> {
+    write!(target, "typedef ")?;
+    codegen_ty(target, ty)?;
+    write!(target, " ")?;
+    codegen_id(target, id)?;
+    write!(target, ";")?;
+    Ok(())
+}
+
+fn codegen_node(target: &mut impl io::Write, node: &AstNode) -> io::Result<()> {
     match node {
-        AstNode::Let(lhs, ty, rhs) => gen_code_for_let(target, *lhs, ty.as_ref(), *rhs),
-        AstNode::FnDef(fn_def) => gen_code_for_fn_def(target, fn_def),
-        AstNode::TypeDef(_, _) => todo!(),
-        AstNode::StructDef(_) => todo!(),
-        AstNode::UnionDef(_) => todo!(),
+        AstNode::Let(lhs, ty, rhs) => codegen_let(target, *lhs, ty.as_ref(), *rhs),
+        AstNode::FnDef(fn_def) => codegen_fn_def(target, fn_def),
+        AstNode::TypeDef(id, ty) => codegen_typedef(target, id, ty),
+        AstNode::StructDef(def) => codegen_struct_def(target, def),
+        AstNode::UnionDef(def) => codegen_union_def(target, def),
         AstNode::EnumDef(_) => todo!(),
-        AstNode::Identifier(id) => gen_code_for_id(target, *id),
-        AstNode::Number(num) => gen_code_for_num(target, *num),
-        AstNode::String(s) => gen_code_for_str_literal(target, *s),
-        AstNode::Char(val) => gen_code_for_char(target, *val),
-        AstNode::Bool(val) => gen_code_for_bool(target, *val),
+        AstNode::Identifier(id) => codegen_id(target, *id),
+        AstNode::Number(num) => codegen_num(target, *num),
+        AstNode::String(s) => codegen_str(target, *s),
+        AstNode::Char(val) => codegen_char(target, *val),
+        AstNode::Bool(val) => codegen_bool(target, *val),
         AstNode::Array(_) => todo!(),
         AstNode::MathOp(_, _, _) => todo!(),
         AstNode::BitOp(_, _, _) => todo!(),
@@ -188,7 +230,7 @@ fn gen_code_for_node(target: &mut impl io::Write, node: &AstNode) -> io::Result<
         AstNode::BoolNot(_) => todo!(),
         AstNode::MinusNum(_) => todo!(),
         AstNode::PlusNum(_) => todo!(),
-        AstNode::Call(callee, args) => gen_code_for_call(target, callee, args),
+        AstNode::Call(callee, args) => codegen_call(target, callee, args),
         AstNode::Assign(_, _) => todo!(),
         AstNode::MathOpAssign(_, _, _) => todo!(),
         AstNode::BitOpAssign(_, _, _) => todo!(),
@@ -197,7 +239,7 @@ fn gen_code_for_node(target: &mut impl io::Write, node: &AstNode) -> io::Result<
         AstNode::Block(_) => todo!(),
         AstNode::If(_) => todo!(),
         AstNode::Loop(_) => todo!(),
-        AstNode::Return(child) => gen_code_for_ret(target, *child),
+        AstNode::Return(child) => codegen_ret(target, *child),
         AstNode::Break => write!(target, "break"),
         AstNode::Continue => write!(target, "continue"),
         AstNode::Typecast(_, _) => todo!(),
@@ -207,7 +249,7 @@ fn gen_code_for_node(target: &mut impl io::Write, node: &AstNode) -> io::Result<
 
 pub fn gen_c_code(target: &mut impl io::Write, mut ast_parser: AstParser<'_>) -> io::Result<()> {
     for root_node in ast_parser.iter() {
-        gen_code_for_node(target, root_node.as_ref().inner())?;
+        codegen_node(target, root_node.as_ref().inner())?;
     }
     Ok(())
 }
