@@ -30,15 +30,42 @@ pub struct AstParser<'src> {
     pub ast: Ast<'src>,
 }
 
-impl<'src> Iterator for AstParser<'src> {
-    type Item = AstNodeRef<'src>;
+impl<'s> AstParser<'s> {
+    #[allow(dead_code)]
+    pub fn parse_all(mut self) -> Ast<'s> {
+        self.iter().for_each(|_| {});
+        self.ast
+    }
+    #[allow(dead_code)]
+    pub fn parse_all_and_for_each(mut self, mut f: impl FnMut(AstNodeRef<'s>)) -> Ast<'s> {
+        while let Some(n) = self.next() {
+            f(n);
+        }
+        self.ast
+    }
+    #[allow(dead_code)]
+    pub fn iter<'a>(&'a mut self) -> Iter<'s, 'a> {
+        Iter { parser: self }
+    }
 
-    fn next(&mut self) -> Option<Self::Item> {
+    fn next(&mut self) -> Option<AstNodeRef<'s>> {
         let node = self.parse_expr(15, true)?;
         syntaxchecker::check_top_level(&node, self.err_collector);
         let node_ref = self.ast.add_node(node);
-        self.ast.root_nodes.push(node_ref.clone());
+        self.ast.root_nodes.push(node_ref);
         Some(node_ref)
+    }
+}
+
+pub struct Iter<'s, 'a> {
+    parser: &'a mut AstParser<'s>,
+}
+
+impl<'s, 'a> Iterator for Iter<'s, 'a> {
+    type Item = AstNodeRef<'s>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        self.parser.next()
     }
 }
 
@@ -352,11 +379,7 @@ impl<'src> AstParser<'src> {
         }
         // If there is an operator and the precedence matches, parse the rhs, "swallow" the node,
         // use it as the LHS, and preduce a new node that is the root of this binary operator
-        loop {
-            let peek = match self.token_stream.peek() {
-                Some(t) => t,
-                None => break,
-            };
+        while let Some(peek) = self.token_stream.peek() {
             match peek.inner() {
                 Token::Dot => {
                     let (l, r, pos) = parse!(binary_op, precedence > 1; else: break);

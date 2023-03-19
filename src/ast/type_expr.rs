@@ -48,11 +48,9 @@ impl<'s> TypeExpr<'s> {
         Self::Tuple(Vec::new())
     }
 
-    pub fn is_void(&self) -> bool {
-        match self {
-            Self::Tuple(children) => children.is_empty(),
-            _ => false,
-        }
+    #[allow(dead_code)]
+    pub fn is_void_tuple(&self) -> bool {
+        matches!(self, Self::Tuple(children) if children.is_empty())
     }
 
     pub fn is_numeric(&self, symbol_table: &SymbolTable<'s>) -> bool {
@@ -83,12 +81,7 @@ impl<'s> TypeExpr<'s> {
 
     pub fn is_signed_numeric(&self, symbol_table: &SymbolTable<'s>) -> bool {
         match self {
-            Self::ISize
-            | Self::I128
-            | Self::I64
-            | Self::I32
-            | Self::I16
-            | Self::I8 => true,
+            Self::ISize | Self::I128 | Self::I64 | Self::I32 | Self::I16 | Self::I8 => true,
             &Self::TypeName(name) => symbol_table.var_type(name).map_or(false, |t| match t {
                 PossibleTypes::IntNumeric => true,
                 PossibleTypes::NegativeIntNumeric => true,

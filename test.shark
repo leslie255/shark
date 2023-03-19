@@ -1,4 +1,3 @@
-fn f(x: []u8) {
-    let var: (u128, usize);
-    let var2: (u128, usize);
+fn main(argc: u32, argv: *u8) -> i32 {
+    return 0;
 }

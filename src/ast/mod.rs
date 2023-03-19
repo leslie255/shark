@@ -14,7 +14,10 @@ use type_expr::TypeExpr;
 
 /// All AST nodes are stored inside a pool
 /// Uses `AstNodeRef` for inter-reference between nodes
-#[derive(Debug, Clone, Default)]
+/// Does not implement `Clone` because `AstNodeRef` has a pointer pointing to the `node_pool`
+/// inside the struct, to be able to clone it, use `Rc<Ast>` (immutable) or `Rc<RefCell<Ast>>`
+/// (mutable)
+#[derive(Debug, Default)]
 pub struct Ast<'src> {
     node_pool: Box<Vec<Traced<'src, AstNode<'src>>>>,
     pub str_pool: Vec<String>,
@@ -117,16 +120,16 @@ impl<'src> AstNode<'src> {
     /// Whether this AST node allows a semicolon to be omitted
     #[inline]
     pub fn allow_omit_semicolon(&self) -> bool {
-        match self {
+        matches!(
+            self,
             &AstNode::Block(_)
-            | &AstNode::FnDef(_)
-            | &AstNode::If(_)
-            | &AstNode::Loop(_)
-            | &AstNode::StructDef(_)
-            | &AstNode::UnionDef(_)
-            | &AstNode::EnumDef(_) => true,
-            _ => false,
-        }
+                | &AstNode::FnDef(_)
+                | &AstNode::If(_)
+                | &AstNode::Loop(_)
+                | &AstNode::StructDef(_)
+                | &AstNode::UnionDef(_)
+                | &AstNode::EnumDef(_)
+        )
     }
 }
 
@@ -140,14 +143,18 @@ impl<'src> Default for AstNode<'src> {
 /// Should only refer to an AstNode owned by Ast
 /// Should only be initialized by an Ast
 #[derive(Clone, Copy)]
-pub struct AstNodeRef<'a> {
-    pool: *const Vec<Traced<'a, AstNode<'a>>>,
+pub struct AstNodeRef<'s> {
+    pool: *const Vec<Traced<'s, AstNode<'s>>>,
     i: usize,
 }
-impl<'a> Deref for AstNodeRef<'a> {
-    type Target = Traced<'a, AstNode<'a>>;
+impl<'s> Deref for AstNodeRef<'s> {
+    type Target = Traced<'s, AstNode<'s>>;
 
-    /// Dereferences the AstNodeRef to the AstNode it points to
+    /// Dereferences the `AstNodeRef` to the `AstNode` it points to
+    /// Due to limitations of the `Deref` trait, the returned reference only a lifetime as long as
+    /// the lifetime of `&self`, but the correct behavior should be that the returned reference has
+    /// a lifetime longer than `'s`, so always use `AstNodeRef::as_ref` instead of
+    /// `AstNodeRef::deref` for explicit dereference
     #[inline]
     fn deref(&self) -> &Self::Target {
         unsafe { (*self.pool).get_unchecked(self.i) }
@@ -156,6 +163,13 @@ impl<'a> Deref for AstNodeRef<'a> {
 impl<'a> Debug for AstNodeRef<'a> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         self.deref().fmt(f)
+    }
+}
+
+impl<'s> AstNodeRef<'s> {
+    #[inline]
+    pub fn as_ref<'a: 's>(&self) -> &'a Traced<'s, AstNode<'s>> {
+        unsafe { (*self.pool).get_unchecked(self.i) }
     }
 }
 
@@ -224,7 +238,7 @@ impl Debug for FnDef<'_> {
         } else {
             write!(f, "{{")?;
             for n in body {
-                print!("{:?}\t{:?};", n.src_loc(), n);
+                write!(f, "{:?}\t{:?};", n.src_loc(), n)?;
             }
         }
         write!(f, "}}")?;
@@ -277,9 +291,7 @@ impl Debug for EnumDef<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(self.name)?;
         f.write_char(' ')?;
-        f.debug_set()
-            .entries(self.cases.iter().map(|v| (v)))
-            .finish()?;
+        f.debug_set().entries(self.cases.iter()).finish()?;
         Ok(())
     }
 }

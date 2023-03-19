@@ -43,7 +43,7 @@ impl SourceString {
     /// let nihao = string.slice(index0..index1);
     /// assert_eq!(nihao, "你好");
     /// ```
-    pub fn char_indices<'a>(&'a self) -> SourceCharIndices<'a> {
+    pub fn char_indices(&self) -> SourceCharIndices {
         SourceCharIndices {
             iter: self.as_bytes().iter(),
             i: 0,
@@ -107,13 +107,13 @@ impl Display for SourceString {
 impl SourceString {
     #[must_use]
     #[inline]
-    pub fn as_str<'a>(&'a self) -> &'a str {
+    pub fn as_str(&self) -> &str {
         self.raw.as_str()
     }
 
     #[must_use]
     #[inline]
-    pub fn as_bytes<'a>(&'a self) -> &'a [u8] {
+    pub fn as_bytes(&self) -> &[u8] {
         self.raw.as_bytes()
     }
 }
