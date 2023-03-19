@@ -1,0 +1,16 @@
+typedef c_int = int32_t;
+
+struct Stuff {
+    a: u32,
+    b: f64,
+}
+
+fn cow_say(i: i32) {
+    printf("the cow says: %d\n", i);
+}
+
+fn main() -> i32 {
+    // this variable should be mangled such that it does not conflict with a C keyword
+    let _C_Keyword: i32 = 255;
+    cow_say(_C_Keyword);
+}

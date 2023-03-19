@@ -66,12 +66,19 @@ fn get_args() -> ArgOptions {
     }
 }
 
+static COMMOH_H_STR: &'static str = include_str!("common.h.txt");
+
 fn main() {
     let options = get_args();
     let buffers = BufferedContent::default();
     let err_collector = ErrorCollector::default();
     let ast_parser = AstParser::new(&options.input_path, &buffers, &err_collector);
     err_collector.print_and_dump_all(&buffers);
+    let common_h_path = std::path::Path::new(options.output_path.as_str())
+        .parent()
+        .expect("Unable to find a valid position for generating common.h")
+        .join("common.h");
+    std::fs::write(common_h_path, COMMOH_H_STR).expect("Unable to write to common.h");
     let mut output_file = File::options()
         .create(true)
         .write(true)

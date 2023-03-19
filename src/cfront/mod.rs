@@ -8,6 +8,8 @@ use crate::{
     token::NumValue,
 };
 
+#[inline]
+#[must_use]
 fn is_c_keyword(s: &str) -> bool {
     match s {
         "auto" | "double" | "int" | "struct" | "break" | "else" | "long" | "switch" | "case"
@@ -19,6 +21,8 @@ fn is_c_keyword(s: &str) -> bool {
     }
 }
 
+#[inline]
+#[must_use]
 fn quick_hash_str(s: &str) -> u64 {
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
     s.chars().for_each(|c| c.hash(&mut hasher));
@@ -62,7 +66,7 @@ fn codegen_ty(target: &mut impl io::Write, ty: &TypeExpr<'_>) -> io::Result<()> 
 #[inline]
 fn codegen_id(target: &mut impl io::Write, id: &str) -> io::Result<()> {
     if is_c_keyword(id) {
-        write!(target, "id{}___{}", id, quick_hash_str(id))
+        write!(target, "ID_{}___{}_", id, quick_hash_str(id))
     } else {
         write!(target, "{}", id)
     }
@@ -248,6 +252,7 @@ fn codegen_node(target: &mut impl io::Write, node: &AstNode) -> io::Result<()> {
 }
 
 pub fn gen_c_code(target: &mut impl io::Write, mut ast_parser: AstParser<'_>) -> io::Result<()> {
+    write!(target, "#include\"common.h\"\n")?;
     for root_node in ast_parser.iter() {
         codegen_node(target, root_node.as_ref().inner())?;
     }
