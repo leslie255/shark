@@ -43,8 +43,10 @@ fn gen_code_for_ty(target: &mut impl io::Write, ty: &TypeExpr<'_>) -> io::Result
         TypeExpr::F32 => write!(target, "float"),
         TypeExpr::Char => write!(target, "uint32_t"),
         TypeExpr::Bool => write!(target, "uint8_t"),
-        TypeExpr::Ptr(ty) => gen_code_for_ty(target, ty.as_ref()),
-        TypeExpr::Ref(ty) => gen_code_for_ty(target, ty.as_ref()),
+        TypeExpr::Ptr(ty) | TypeExpr::Ref(ty) => {
+            gen_code_for_ty(target, ty.as_ref())?;
+            write!(target, "*")
+        }
         TypeExpr::Slice(_) => todo!("slice type"),
         TypeExpr::Array(_, _) => todo!("array type"),
         TypeExpr::Tuple(fields) if fields.is_empty() => write!(target, "void"),
