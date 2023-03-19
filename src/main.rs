@@ -76,7 +76,7 @@ fn main() {
     let mut output_file = File::options()
         .create(true)
         .write(true)
-        .truncate(false)
+        .truncate(true)
         .open(options.output_path.as_str())
         .expect("Unable to open the specified output file, the path either does not exist or you do not have write permission");
     cfront::gen_c_code(&mut output_file, ast_parser).unwrap();

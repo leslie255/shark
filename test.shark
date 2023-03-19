@@ -1,3 +1,4 @@
 fn main(argc: u32, argv: *u8) -> i32 {
+    let a: i32 = 255;
     return 0;
 }

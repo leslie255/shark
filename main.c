@@ -1,1 +1,4 @@
-int32_t main(uint32_t argc,uint8_t* argv){return 0u;}
+int32_t main(uint32_t argc, uint8_t *argv) {
+  int32_t a = 255u;
+  return 0u;
+}
