@@ -18,7 +18,6 @@ struct ArgOptions {
     output_path: String,
 }
 
-#[allow(unused)]
 fn get_args() -> ArgOptions {
     let mut args = env::args();
     args.next().expect("wtf");

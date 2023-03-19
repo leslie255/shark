@@ -99,7 +99,6 @@ fn gen_code_for_let<'s>(
         gen_code_for_node(target, rhs_node)?;
     } else {
     }
-    write!(target, ";")?;
     Ok(())
 }
 
@@ -123,6 +122,7 @@ fn gen_code_for_fn_def<'s>(target: &mut impl io::Write, fn_def: &FnDef<'s>) -> i
             write!(target, "{{")?;
             for n in body {
                 gen_code_for_node(target, n.as_ref().inner())?;
+                write!(target, ";")?;
             }
             write!(target, "}}")?;
         }
@@ -141,11 +141,31 @@ fn gen_code_for_ret<'s>(
         Some(child) => gen_code_for_node(target, child.as_ref().inner())?,
         None => (),
     }
-    write!(target, ";")?;
     Ok(())
 }
 
-fn gen_code_for_node<'s>(target: &mut impl io::Write, node: &AstNode) -> io::Result<()> {
+fn gen_code_for_call(
+    target: &mut impl io::Write,
+    callee: &AstNode,
+    args: &Vec<AstNodeRef>,
+) -> io::Result<()> {
+    gen_code_for_node(target, callee)?;
+    write!(target, "(")?;
+    for (i, arg_node) in args.iter().enumerate() {
+        gen_code_for_node(target, arg_node.as_ref().inner())?;
+        if i < args.len() - 1 {
+            write!(target, ",")?;
+        }
+    }
+    write!(target, ")")?;
+    Ok(())
+}
+
+fn gen_code_for_str_literal(target: &mut impl io::Write, s: *const str) -> io::Result<()> {
+    write!(target, "{:?}", unsafe { s.as_ref().unwrap() })
+}
+
+fn gen_code_for_node(target: &mut impl io::Write, node: &AstNode) -> io::Result<()> {
     match node {
         AstNode::Let(lhs, ty, rhs) => gen_code_for_let(target, *lhs, ty.as_ref(), *rhs),
         AstNode::FnDef(fn_def) => gen_code_for_fn_def(target, fn_def),
@@ -155,7 +175,7 @@ fn gen_code_for_node<'s>(target: &mut impl io::Write, node: &AstNode) -> io::Res
         AstNode::EnumDef(_) => todo!(),
         AstNode::Identifier(id) => gen_code_for_id(target, *id),
         AstNode::Number(num) => gen_code_for_num(target, *num),
-        AstNode::String(_) => todo!(),
+        AstNode::String(s) => gen_code_for_str_literal(target, *s),
         AstNode::Char(val) => gen_code_for_char(target, *val),
         AstNode::Bool(val) => gen_code_for_bool(target, *val),
         AstNode::Array(_) => todo!(),
@@ -168,7 +188,7 @@ fn gen_code_for_node<'s>(target: &mut impl io::Write, node: &AstNode) -> io::Res
         AstNode::BoolNot(_) => todo!(),
         AstNode::MinusNum(_) => todo!(),
         AstNode::PlusNum(_) => todo!(),
-        AstNode::Call(_, _) => todo!(),
+        AstNode::Call(callee, args) => gen_code_for_call(target, callee, args),
         AstNode::Assign(_, _) => todo!(),
         AstNode::MathOpAssign(_, _, _) => todo!(),
         AstNode::BitOpAssign(_, _, _) => todo!(),

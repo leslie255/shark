@@ -224,12 +224,6 @@ impl<'src> AstParser<'src> {
             ast: Ast::default(),
         }
     }
-    #[allow(dead_code)]
-    #[must_use]
-    #[inline]
-    pub fn str_pool(&self) -> &Vec<String> {
-        &self.ast.str_pool
-    }
 
     /// Parse a expression.
     ///

@@ -20,7 +20,7 @@ use type_expr::TypeExpr;
 #[derive(Debug, Default)]
 pub struct Ast<'src> {
     node_pool: Box<Vec<Traced<'src, AstNode<'src>>>>,
-    pub str_pool: Vec<String>,
+    str_pool: Vec<String>,
     pub root_nodes: Vec<AstNodeRef<'src>>,
 }
 
@@ -37,74 +37,74 @@ impl<'src> Ast<'src> {
         };
         node_ref
     }
-    /// Add a new string to `str_pool` and return the index of that string
-    pub fn add_str(&mut self, str: String) -> usize {
+    /// Add a new string to `str_pool` and return a `*const str` pointer to that string
+    pub fn add_str(&mut self, str: String) -> *const str {
+        let result = str.as_str() as *const str;
         self.str_pool.push(str);
-        self.str_pool.len() - 1
+        result
     }
 }
 
 /// A node inside an AST
 #[derive(Debug, Clone)]
-pub enum AstNode<'src> {
+pub enum AstNode<'s> {
     // --- Simple things
     /// Sliced from source
-    Identifier(&'src str),
+    Identifier(&'s str),
     Number(NumValue),
-    /// By index in `Ast.str_pool`
-    String(usize),
+    String(*const str),
     Char(char),
     Bool(bool),
-    Array(Vec<AstNodeRef<'src>>),
+    Array(Vec<AstNodeRef<'s>>),
 
     // --- Operators
     // -- Binary operators
-    MathOp(MathOpKind, AstNodeRef<'src>, AstNodeRef<'src>),
-    BitOp(BitOpKind, AstNodeRef<'src>, AstNodeRef<'src>),
-    BoolOp(BoolOpKind, AstNodeRef<'src>, AstNodeRef<'src>),
-    Cmp(CmpKind, AstNodeRef<'src>, AstNodeRef<'src>),
-    MemberAccess(AstNodeRef<'src>, AstNodeRef<'src>),
+    MathOp(MathOpKind, AstNodeRef<'s>, AstNodeRef<'s>),
+    BitOp(BitOpKind, AstNodeRef<'s>, AstNodeRef<'s>),
+    BoolOp(BoolOpKind, AstNodeRef<'s>, AstNodeRef<'s>),
+    Cmp(CmpKind, AstNodeRef<'s>, AstNodeRef<'s>),
+    MemberAccess(AstNodeRef<'s>, AstNodeRef<'s>),
 
     // -- Singular operators
-    BitNot(AstNodeRef<'src>),
-    BoolNot(AstNodeRef<'src>),
+    BitNot(AstNodeRef<'s>),
+    BoolNot(AstNodeRef<'s>),
     /// used when a minus sign is in front of a number, such as `-255`
-    MinusNum(AstNodeRef<'src>),
+    MinusNum(AstNodeRef<'s>),
     /// used when a plus sign is in front of a number, such as `+255`
-    PlusNum(AstNodeRef<'src>),
+    PlusNum(AstNodeRef<'s>),
 
-    Call(AstNodeRef<'src>, Vec<AstNodeRef<'src>>),
+    Call(AstNodeRef<'s>, Vec<AstNodeRef<'s>>),
 
     // --- Assignments
-    Let(&'src str, Option<TypeExpr<'src>>, Option<AstNodeRef<'src>>),
-    Assign(AstNodeRef<'src>, AstNodeRef<'src>),
+    Let(&'s str, Option<TypeExpr<'s>>, Option<AstNodeRef<'s>>),
+    Assign(AstNodeRef<'s>, AstNodeRef<'s>),
     /// +=, -=, *=, /=, %=
-    MathOpAssign(MathOpKind, AstNodeRef<'src>, AstNodeRef<'src>),
+    MathOpAssign(MathOpKind, AstNodeRef<'s>, AstNodeRef<'s>),
     /// |=, &=, ^=
-    BitOpAssign(BitOpKind, AstNodeRef<'src>, AstNodeRef<'src>),
+    BitOpAssign(BitOpKind, AstNodeRef<'s>, AstNodeRef<'s>),
 
     // --- Reference operations
-    TakeRef(AstNodeRef<'src>),
-    Deref(AstNodeRef<'src>),
+    TakeRef(AstNodeRef<'s>),
+    Deref(AstNodeRef<'s>),
 
     // -- Control flow
-    Block(Vec<AstNodeRef<'src>>),
-    FnDef(FnDef<'src>),
-    If(IfExpr<'src>),
-    Loop(Vec<AstNodeRef<'src>>),
-    Return(Option<AstNodeRef<'src>>),
+    Block(Vec<AstNodeRef<'s>>),
+    FnDef(FnDef<'s>),
+    If(IfExpr<'s>),
+    Loop(Vec<AstNodeRef<'s>>),
+    Return(Option<AstNodeRef<'s>>),
     Break,
     Continue,
 
-    Typecast(AstNodeRef<'src>, TypeExpr<'src>),
+    Typecast(AstNodeRef<'s>, TypeExpr<'s>),
 
     // type definitions
-    TypeDef(&'src str, TypeExpr<'src>),
-    StructDef(StructOrUnionDef<'src>),
-    UnionDef(StructOrUnionDef<'src>),
-    EnumDef(EnumDef<'src>),
+    TypeDef(&'s str, TypeExpr<'s>),
+    StructDef(StructOrUnionDef<'s>),
+    UnionDef(StructOrUnionDef<'s>),
+    EnumDef(EnumDef<'s>),
 
-    Tuple(Vec<Traced<'src, AstNode<'src>>>),
+    Tuple(Vec<Traced<'s, AstNode<'s>>>),
 }
 impl<'src> AstNode<'src> {
     /// Create a `Traced<AstNode> from this `AstNode`

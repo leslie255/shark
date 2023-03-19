@@ -1,4 +1,5 @@
 fn main(argc: u32, argv: *u8) -> i32 {
     let a: i32 = 255;
+    printf("hello, world\n");
     return 0;
 }
