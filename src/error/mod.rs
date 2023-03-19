@@ -167,8 +167,10 @@ impl<'a> ErrorCollector<'a> {
     pub fn collect(&self, e: Error<'a>) {
         self.errors.borrow_mut().push(e);
     }
+
     /// Print the errors in it's final presentation format, and remove all the errors
-    pub fn print_and_dump_all(&self, sources: &'a BufferedContent<'a>) {
+    /// Returns true of there are at least one error
+    pub fn print_and_dump_all(&self, sources: &'a BufferedContent<'a>) -> bool {
         // TODO: If multiple errors happen in one line, print them in one block
         let mut current_filename = "";
         let mut current_file_content = "";
@@ -205,7 +207,9 @@ impl<'a> ErrorCollector<'a> {
                 }
             }
         }
-        self.errors.borrow_mut().clear()
+        let has_errors = self.errors.borrow().is_empty();
+        self.errors.borrow_mut().clear();
+        has_errors
     }
 }
 
