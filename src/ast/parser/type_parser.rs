@@ -99,7 +99,7 @@ fn parse_type_expr_node<'s>(
                     }
                     let child =
                         parse_type_expr_node(parser, peeked_location, recursive_counter + 1)?;
-                    TypeExpr::Array(len, Box::new(child))
+                    TypeExpr::Array((len, Box::new(child)))
                 }
                 _ => ret_no_closing_paren_err!(peeked_location),
             }

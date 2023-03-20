@@ -1,12 +1,18 @@
+#![allow(dead_code)]
+
+mod scan;
+
 use std::{
     hash::{Hash, Hasher},
-    io,
+    io::{self, Write},
 };
 
 use crate::{
     ast::{parser::AstParser, type_expr::TypeExpr, AstNode, AstNodeRef, FnDef, StructOrUnionDef},
     token::NumValue,
 };
+
+use self::scan::Context;
 
 #[inline]
 #[must_use]
@@ -29,34 +35,34 @@ fn quick_hash_str(s: &str) -> u64 {
     hasher.finish()
 }
 
-fn codegen_ty(target: &mut impl io::Write, ty: &TypeExpr<'_>) -> io::Result<()> {
+pub(self) fn codegen_ty(context: &mut Context<impl Write, impl Write>, ty: &TypeExpr<'_>) -> io::Result<()> {
     match ty {
-        TypeExpr::USize => write!(target, "size_t"),
-        TypeExpr::ISize => write!(target, "ssize_t"),
+        TypeExpr::USize => write!(context.c_file, "size_t"),
+        TypeExpr::ISize => write!(context.c_file, "ssize_t"),
         TypeExpr::U128 => todo!("u128 type"),
-        TypeExpr::U64 => write!(target, "uint64_t"),
-        TypeExpr::U32 => write!(target, "uint32_t"),
-        TypeExpr::U16 => write!(target, "uint16_t"),
-        TypeExpr::U8 => write!(target, "uint8_t"),
+        TypeExpr::U64 => write!(context.c_file, "uint64_t"),
+        TypeExpr::U32 => write!(context.c_file, "uint32_t"),
+        TypeExpr::U16 => write!(context.c_file, "uint16_t"),
+        TypeExpr::U8 => write!(context.c_file, "uint8_t"),
         TypeExpr::I128 => todo!("i128 type"),
-        TypeExpr::I64 => write!(target, "int64_t"),
-        TypeExpr::I32 => write!(target, "int32_t"),
-        TypeExpr::I16 => write!(target, "int16_t"),
-        TypeExpr::I8 => write!(target, "int8_t"),
-        TypeExpr::F64 => write!(target, "double"),
-        TypeExpr::F32 => write!(target, "float"),
-        TypeExpr::Char => write!(target, "uint32_t"),
-        TypeExpr::Bool => write!(target, "uint8_t"),
+        TypeExpr::I64 => write!(context.c_file, "int64_t"),
+        TypeExpr::I32 => write!(context.c_file, "int32_t"),
+        TypeExpr::I16 => write!(context.c_file, "int16_t"),
+        TypeExpr::I8 => write!(context.c_file, "int8_t"),
+        TypeExpr::F64 => write!(context.c_file, "double"),
+        TypeExpr::F32 => write!(context.c_file, "float"),
+        TypeExpr::Char => write!(context.c_file, "uint32_t"),
+        TypeExpr::Bool => write!(context.c_file, "uint8_t"),
         TypeExpr::Ptr(ty) | TypeExpr::Ref(ty) => {
-            codegen_ty(target, ty.as_ref())?;
-            write!(target, "*")
+            codegen_ty(context, ty.as_ref())?;
+            write!(context.c_file, "*")
         }
         TypeExpr::Slice(_) => todo!("slice type"),
-        TypeExpr::Array(_, _) => todo!("array type"),
-        TypeExpr::Tuple(fields) if fields.is_empty() => write!(target, "void"),
+        TypeExpr::Array(..) => todo!("array type"),
+        TypeExpr::Tuple(fields) if fields.is_empty() => write!(context.c_file, "void"),
         TypeExpr::Tuple(_) => todo!("tuple type"),
         TypeExpr::Fn(_, _) => todo!("function pointer type"),
-        TypeExpr::TypeName(id) => codegen_id(target, id),
+        TypeExpr::TypeName(id) => codegen_id(context, id),
         TypeExpr::Struct => todo!("struct"),
         TypeExpr::Union => todo!("union"),
         TypeExpr::Enum => todo!("enum"),
@@ -64,82 +70,88 @@ fn codegen_ty(target: &mut impl io::Write, ty: &TypeExpr<'_>) -> io::Result<()> 
 }
 
 #[inline]
-fn codegen_id(target: &mut impl io::Write, id: &str) -> io::Result<()> {
+fn codegen_id(context: &mut Context<impl Write, impl Write>, id: &str) -> io::Result<()> {
     if is_c_keyword(id) {
-        write!(target, "ID_{}___{}_", id, quick_hash_str(id))
+        write!(context.c_file, "ID_{}___{}_", id, quick_hash_str(id))
     } else {
-        write!(target, "{}", id)
+        write!(context.c_file, "{}", id)
     }
 }
 
 #[inline]
-fn codegen_num(target: &mut impl io::Write, num: NumValue) -> io::Result<()> {
-    write!(target, "{:?}", num)
+fn codegen_num(context: &mut Context<impl Write, impl Write>, num: NumValue) -> io::Result<()> {
+    write!(context.c_file, "{:?}", num)
 }
 
 #[inline]
-fn codegen_bool(target: &mut impl io::Write, val: bool) -> io::Result<()> {
-    write!(target, "{}", if val { 1 } else { 0 })
+fn codegen_bool(context: &mut Context<impl Write, impl Write>, val: bool) -> io::Result<()> {
+    write!(context.c_file, "{}", if val { 1 } else { 0 })
 }
 
 #[inline]
-fn codegen_char(target: &mut impl io::Write, val: char) -> io::Result<()> {
-    write!(target, "{}", u32::from(val))
+fn codegen_char(context: &mut Context<impl Write, impl Write>, val: char) -> io::Result<()> {
+    write!(context.c_file, "{}", u32::from(val))
 }
 
 #[inline]
 fn codegen_let<'s>(
-    target: &mut impl io::Write,
+    context: &mut Context<impl Write, impl Write>,
     lhs: &'s str,
     ty: Option<&TypeExpr<'s>>,
     rhs: Option<AstNodeRef<'s>>,
 ) -> io::Result<()> {
     let ty = ty.expect("type infer is unimplemented");
-    codegen_ty(target, ty)?;
-    write!(target, " ")?;
-    codegen_id(target, lhs)?;
+    codegen_ty(context, ty)?;
+    write!(context.c_file, " ")?;
+    codegen_id(context, lhs)?;
     if let Some(rhs_node) = rhs.map(|n| n.as_ref().inner()) {
-        write!(target, " = ")?;
-        codegen_node(target, rhs_node)?;
+        write!(context.c_file, " = ")?;
+        codegen_node(context, rhs_node)?;
     } else {
     }
     Ok(())
 }
 
 #[inline]
-fn codegen_fn_def<'s>(target: &mut impl io::Write, fn_def: &FnDef<'s>) -> io::Result<()> {
-    codegen_ty(target, &fn_def.sign.ret_type)?;
-    write!(target, " ")?;
-    codegen_id(target, fn_def.name)?;
-    write!(target, "(")?;
+fn codegen_fn_def<'s>(
+    context: &mut Context<impl Write, impl Write>,
+    fn_def: &FnDef<'s>,
+) -> io::Result<()> {
+    codegen_ty(context, &fn_def.sign.ret_type)?;
+    write!(context.c_file, " ")?;
+    codegen_id(context, fn_def.name)?;
+    write!(context.c_file, "(")?;
     for (i, (arg_name, arg_ty)) in fn_def.sign.args.iter().enumerate() {
-        codegen_ty(target, arg_ty)?;
-        write!(target, " ")?;
-        codegen_id(target, *arg_name)?;
+        codegen_ty(context, arg_ty)?;
+        write!(context.c_file, " ")?;
+        codegen_id(context, *arg_name)?;
         if i < fn_def.sign.args.len() - 1 {
-            write!(target, ",")?;
+            write!(context.c_file, ",")?;
         }
     }
-    write!(target, ")")?;
+    write!(context.c_file, ")")?;
     match fn_def.body {
         Some(ref body) => {
-            write!(target, "{{")?;
+            write!(context.c_file, "{{")?;
             for n in body {
-                codegen_node(target, n.as_ref().inner())?;
-                write!(target, ";")?;
+                codegen_node(context, n.as_ref().inner())?;
+                write!(context.c_file, ";")?;
             }
-            write!(target, "}}")?;
+            write!(context.c_file, "}}")?;
         }
-        None => write!(target, ";")?,
+        None => write!(context.c_file, ";")?,
     }
     Ok(())
 }
 
 #[inline]
-fn codegen_ret<'s>(target: &mut impl io::Write, child: Option<AstNodeRef<'_>>) -> io::Result<()> {
-    write!(target, "return ")?;
+fn codegen_ret<'s>(
+    context: &mut Context<impl Write, impl Write>,
+    child: Option<AstNodeRef<'_>>,
+) -> io::Result<()> {
+    write!(context.c_file, "return ")?;
     match child {
-        Some(child) => codegen_node(target, child.as_ref().inner())?,
+        Some(child) => codegen_node(context, child.as_ref().inner())?,
         None => (),
     }
     Ok(())
@@ -147,83 +159,93 @@ fn codegen_ret<'s>(target: &mut impl io::Write, child: Option<AstNodeRef<'_>>) -
 
 #[inline]
 fn codegen_call(
-    target: &mut impl io::Write,
+    context: &mut Context<impl Write, impl Write>,
     callee: &AstNode,
     args: &Vec<AstNodeRef>,
 ) -> io::Result<()> {
-    codegen_node(target, callee)?;
-    write!(target, "(")?;
+    codegen_node(context, callee)?;
+    write!(context.c_file, "(")?;
     for (i, arg_node) in args.iter().enumerate() {
-        codegen_node(target, arg_node.as_ref().inner())?;
+        codegen_node(context, arg_node.as_ref().inner())?;
         if i < args.len() - 1 {
-            write!(target, ",")?;
+            write!(context.c_file, ",")?;
         }
     }
-    write!(target, ")")?;
+    write!(context.c_file, ")")?;
     Ok(())
 }
 
 #[inline]
-fn codegen_str(target: &mut impl io::Write, s: *const str) -> io::Result<()> {
-    write!(target, "{:?}", unsafe { s.as_ref().unwrap() })
+fn codegen_str(context: &mut Context<impl Write, impl Write>, s: *const str) -> io::Result<()> {
+    write!(context.c_file, "{:?}", unsafe { s.as_ref().unwrap() })
 }
 
 /// Because `struct` and `union` definition syntax are so similar in C, this function is in charge
 /// of generation `NAME {field0:ty0;field1:ty1; ... }` right after the `struct` or `union` keyword
 #[inline]
 fn codegen_struct_union_name_and_body(
-    target: &mut impl io::Write,
+    context: &mut Context<impl Write, impl Write>,
     def: &StructOrUnionDef,
 ) -> io::Result<()> {
-    codegen_id(target, def.name)?;
-    write!(target, "{{")?;
+    codegen_id(context, def.name)?;
+    write!(context.c_file, "{{")?;
     for (id, ty) in &def.fields {
-        codegen_ty(target, ty)?;
-        write!(target, " ")?;
-        codegen_id(target, id)?;
-        write!(target, ";")?;
+        codegen_ty(context, ty)?;
+        write!(context.c_file, " ")?;
+        codegen_id(context, id)?;
+        write!(context.c_file, ";")?;
     }
-    write!(target, "}}")?;
-    codegen_id(target, def.name)?;
-    write!(target, ";")?;
+    write!(context.c_file, "}}")?;
+    codegen_id(context, def.name)?;
+    write!(context.c_file, ";")?;
     Ok(())
 }
 
 #[inline]
-fn codegen_struct_def(target: &mut impl io::Write, def: &StructOrUnionDef) -> io::Result<()> {
-    write!(target, "typedef struct ")?;
-    codegen_struct_union_name_and_body(target, def)
+fn codegen_struct_def(
+    context: &mut Context<impl Write, impl Write>,
+    def: &StructOrUnionDef,
+) -> io::Result<()> {
+    write!(context.c_file, "typedef struct ")?;
+    codegen_struct_union_name_and_body(context, def)
 }
 
 #[inline]
-fn codegen_union_def(target: &mut impl io::Write, def: &StructOrUnionDef) -> io::Result<()> {
-    write!(target, "typedef union ")?;
-    codegen_struct_union_name_and_body(target, def)
+fn codegen_union_def(
+    context: &mut Context<impl Write, impl Write>,
+    def: &StructOrUnionDef,
+) -> io::Result<()> {
+    write!(context.c_file, "typedef union ")?;
+    codegen_struct_union_name_and_body(context, def)
 }
 
 #[inline]
-fn codegen_typedef(target: &mut impl io::Write, id: &str, ty: &TypeExpr) -> io::Result<()> {
-    write!(target, "typedef ")?;
-    codegen_ty(target, ty)?;
-    write!(target, " ")?;
-    codegen_id(target, id)?;
-    write!(target, ";")?;
+fn codegen_typedef(
+    context: &mut Context<impl Write, impl Write>,
+    id: &str,
+    ty: &TypeExpr,
+) -> io::Result<()> {
+    write!(context.c_file, "typedef ")?;
+    codegen_ty(context, ty)?;
+    write!(context.c_file, " ")?;
+    codegen_id(context, id)?;
+    write!(context.c_file, ";")?;
     Ok(())
 }
 
-fn codegen_node(target: &mut impl io::Write, node: &AstNode) -> io::Result<()> {
+fn codegen_node<C: Write, H: Write>(context: &mut Context<C, H>, node: &AstNode) -> io::Result<()> {
     match node {
-        AstNode::Let(lhs, ty, rhs) => codegen_let(target, *lhs, ty.as_ref(), *rhs),
-        AstNode::FnDef(fn_def) => codegen_fn_def(target, fn_def),
-        AstNode::TypeDef(id, ty) => codegen_typedef(target, id, ty),
-        AstNode::StructDef(def) => codegen_struct_def(target, def),
-        AstNode::UnionDef(def) => codegen_union_def(target, def),
+        AstNode::Let(lhs, ty, rhs) => codegen_let(context, *lhs, ty.as_ref(), *rhs),
+        AstNode::FnDef(fn_def) => codegen_fn_def(context, fn_def),
+        AstNode::TypeDef(id, ty) => codegen_typedef(context, id, ty),
+        AstNode::StructDef(def) => codegen_struct_def(context, def),
+        AstNode::UnionDef(def) => codegen_union_def(context, def),
         AstNode::EnumDef(_) => todo!(),
-        AstNode::Identifier(id) => codegen_id(target, *id),
-        AstNode::Number(num) => codegen_num(target, *num),
-        AstNode::String(s) => codegen_str(target, *s),
-        AstNode::Char(val) => codegen_char(target, *val),
-        AstNode::Bool(val) => codegen_bool(target, *val),
+        AstNode::Identifier(id) => codegen_id(context, *id),
+        AstNode::Number(num) => codegen_num(context, *num),
+        AstNode::String(s) => codegen_str(context, *s),
+        AstNode::Char(val) => codegen_char(context, *val),
+        AstNode::Bool(val) => codegen_bool(context, *val),
         AstNode::Array(_) => todo!(),
         AstNode::MathOp(_, _, _) => todo!(),
         AstNode::BitOp(_, _, _) => todo!(),
@@ -234,7 +256,7 @@ fn codegen_node(target: &mut impl io::Write, node: &AstNode) -> io::Result<()> {
         AstNode::BoolNot(_) => todo!(),
         AstNode::MinusNum(_) => todo!(),
         AstNode::PlusNum(_) => todo!(),
-        AstNode::Call(callee, args) => codegen_call(target, callee, args),
+        AstNode::Call(callee, args) => codegen_call(context, callee, args),
         AstNode::Assign(_, _) => todo!(),
         AstNode::MathOpAssign(_, _, _) => todo!(),
         AstNode::BitOpAssign(_, _, _) => todo!(),
@@ -243,18 +265,19 @@ fn codegen_node(target: &mut impl io::Write, node: &AstNode) -> io::Result<()> {
         AstNode::Block(_) => todo!(),
         AstNode::If(_) => todo!(),
         AstNode::Loop(_) => todo!(),
-        AstNode::Return(child) => codegen_ret(target, *child),
-        AstNode::Break => write!(target, "break"),
-        AstNode::Continue => write!(target, "continue"),
+        AstNode::Return(child) => codegen_ret(context, *child),
+        AstNode::Break => write!(context.c_file, "break"),
+        AstNode::Continue => write!(context.c_file, "continue"),
         AstNode::Typecast(_, _) => todo!(),
         AstNode::Tuple(_) => unreachable!(),
     }
 }
 
-pub fn gen_c_code(target: &mut impl io::Write, mut ast_parser: AstParser<'_>) -> io::Result<()> {
-    write!(target, "#include\"common.h\"\n")?;
-    for root_node in ast_parser.iter() {
-        codegen_node(target, root_node.as_ref().inner())?;
+pub fn gen_c_code(mut target_c: impl Write, target_h: impl Write, ast_parser: AstParser<'_>) {
+    write!(target_c, "#include\"common.h\"\n").expect("write error when writing to files");
+    let (mut context, ast) = scan::scan(target_c, target_h, ast_parser);
+    for root_node in &ast.root_nodes {
+        codegen_node(&mut context, root_node.as_ref().inner())
+            .expect("write error when writing to files");
     }
-    Ok(())
 }

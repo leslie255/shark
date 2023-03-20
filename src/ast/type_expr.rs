@@ -2,7 +2,7 @@ use std::fmt::{Debug, Display, Formatter};
 
 use crate::checks::symboltable::{PossibleTypes, SymbolTable};
 
-#[derive(Clone)]
+#[derive(Clone, Hash, PartialEq, Eq)]
 pub enum TypeExpr<'s> {
     USize,
     ISize,
@@ -25,7 +25,7 @@ pub enum TypeExpr<'s> {
     Ref(Box<Self>),
     Slice(Box<Self>),
     /// length, child node
-    Array(u64, Box<Self>),
+    Array((u64, Box<Self>)),
     Tuple(Vec<Self>),
 
     /// arg types, ret type
@@ -127,7 +127,7 @@ impl Debug for TypeExpr<'_> {
             Self::Ptr(child) => write!(f, "*{:?}", child)?,
             Self::Ref(child) => write!(f, "&{:?}", child)?,
             Self::Slice(child) => write!(f, "[]{:?}", child)?,
-            Self::Array(len, child) => write!(f, "[{}]{:?}", len, child)?,
+            Self::Array((len, child)) => write!(f, "[{}]{:?}", len, child)?,
             Self::Tuple(children) => {
                 write!(f, "(")?;
                 let child_count = children.len();
@@ -216,7 +216,7 @@ impl<'s> TypeExpr<'s> {
             (TypeExpr::Ptr(lhs), TypeExpr::Ptr(rhs))
             | (TypeExpr::Ref(lhs), TypeExpr::Ref(rhs))
             | (TypeExpr::Slice(lhs), TypeExpr::Slice(rhs)) => Self::eq(lhs, rhs, symbol_table),
-            (TypeExpr::Array(lhs_len, lhs), TypeExpr::Array(rhs_len, rhs)) => {
+            (TypeExpr::Array((lhs_len, lhs)), TypeExpr::Array((rhs_len, rhs))) => {
                 lhs_len == rhs_len && Self::eq(lhs, rhs, symbol_table)
             }
             (TypeExpr::Tuple(lhs_children), TypeExpr::Tuple(rhs_children)) => {

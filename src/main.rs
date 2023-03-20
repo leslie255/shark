@@ -1,3 +1,5 @@
+#![feature(hash_raw_entry)]
+
 mod ast;
 mod buffered_content;
 mod cfront;
@@ -15,41 +17,24 @@ use error::ErrorCollector;
 
 struct ArgOptions {
     input_path: String,
-    output_path: String,
+    output_c: String,
+    output_h: String,
 }
 
 fn get_args() -> ArgOptions {
     let mut args = env::args();
     args.next().expect("wtf");
 
-    let mut input_path = Option::<String>::None;
-    let mut output_path = Option::<String>::None;
+    let input_path = args.next().expect("No input path provided");
 
-    while let Some(arg) = args.next() {
-        match arg.as_str() {
-            "-o" => {
-                if output_path.is_some() {
-                    panic!("Multiple output path is not ok! If you meant for it to be an input path, remove `-o`");
-                }
-                output_path = Some(
-                    args.next()
-                        .expect("Expects another argument after `-o` for output path"),
-                );
-            }
-            _ => {
-                if input_path.is_some() {
-                    panic!("Multiple input path is not supported yet, did you mean to use `-o` for output path?");
-                }
-                input_path = Some(arg)
-            }
-        }
+    if args.next().is_some() {
+        panic!("Cannot have multiple input paths");
     }
 
-    let input_path = input_path.expect("No input path provided");
-    let output_path = output_path.unwrap_or({
+    let output_c = {
         let size_hint = input_path
             .len()
-            .checked_sub(4) // removing ".shark" and adding ".c"
+            .checked_sub(4) // removing ".shark" and adding ".c" => sub 4 bytes
             .expect("No output path provided nor could it be derived from the input path");
         let mut s = String::with_capacity(size_hint);
         let stripped_path = input_path
@@ -58,15 +43,27 @@ fn get_args() -> ArgOptions {
         s.push_str(stripped_path);
         s.push_str(".c");
         s
-    });
+    };
+    let output_h = {
+        let size_hint = input_path
+            .len()
+            .checked_sub(4) // removing ".shark" and adding ".c" => sub 4 bytes
+            .expect("No output path provided nor could it be derived from the input path");
+        let mut s = String::with_capacity(size_hint);
+        let stripped_path = input_path
+            .strip_suffix(".shark")
+            .expect("No output path provided nor could it be derived from the input path");
+        s.push_str(stripped_path);
+        s.push_str(".h");
+        s
+    };
 
     ArgOptions {
         input_path,
-        output_path,
+        output_c,
+        output_h,
     }
 }
-
-static COMMOH_H_STR: &'static str = include_str!("common.h.txt");
 
 fn main() {
     let options = get_args();
@@ -74,16 +71,17 @@ fn main() {
     let err_collector = ErrorCollector::default();
     let ast_parser = AstParser::new(&options.input_path, &buffers, &err_collector);
     err_collector.print_and_dump_all(&buffers);
-    let common_h_path = std::path::Path::new(options.output_path.as_str())
-        .parent()
-        .expect("Unable to find a valid position for generating common.h")
-        .join("common.h");
-    std::fs::write(common_h_path, COMMOH_H_STR).expect("Unable to write to common.h");
-    let mut output_file = File::options()
+    let output_file_c = File::options()
         .create(true)
         .write(true)
         .truncate(true)
-        .open(options.output_path.as_str())
+        .open(options.output_c.as_str())
         .expect("Unable to open the specified output file, the path either does not exist or you do not have write permission");
-    cfront::gen_c_code(&mut output_file, ast_parser).unwrap();
+    let output_file_h = File::options()
+        .create(true)
+        .write(true)
+        .truncate(true)
+        .open(options.output_h.as_str())
+        .expect("Unable to open the specified output file, the path either does not exist or you do not have write permission");
+    cfront::gen_c_code(output_file_c, output_file_h, ast_parser);
 }

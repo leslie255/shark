@@ -22,6 +22,10 @@ typedef double f64;
 typedef size_t usize;
 typedef ssize_t isize;
 
+static inline u16 swap_bytes(const u16 data) {
+  return ((data << 8) & 0xff00) | ((data >> 8) & 0x00ff);
+}
+
 #define TODO()                                                                 \
   {                                                                            \
     printf("Unimplemented: %s@%s:%d\n", __FUNCTION__, __FILE__, __LINE__);     \
