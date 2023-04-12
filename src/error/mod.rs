@@ -2,10 +2,11 @@ pub mod location;
 
 use std::cell::RefCell;
 
-use colored::Colorize;
 use location::{IntoSourceLoc, SourceLocation};
 
 use crate::{buffered_content::BufferedContent, token::Token};
+
+use crate::term_color;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum StrOrChar {
@@ -14,7 +15,7 @@ pub enum StrOrChar {
 }
 
 #[derive(Debug, Clone)]
-pub enum ErrorContent<'src> {
+pub enum ErrorContent {
     // --- Tokenizer stage
     InvalidCharacter(char),
 
@@ -40,8 +41,8 @@ pub enum ErrorContent<'src> {
     InvalidTypeExpr,
     SliceNoClosingParen,
     LetNoTypeOrRHS,
-    ExpectToken(Token<'src>),
-    ExpectMultipleTokens(Vec<Token<'src>>),
+    ExpectToken(Token),
+    ExpectMultipleTokens(Vec<Token>),
     NonUIntForArrLen,
     TypeExprStackOverflow,
 
@@ -51,11 +52,12 @@ pub enum ErrorContent<'src> {
     ExprNotAllowedAsChild,
 
     // -- Type checker error
+    #[allow(dead_code)]
     InvalidMemberAccess,
 }
-impl<'src> ErrorContent<'src> {
+impl ErrorContent {
     #[must_use]
-    pub fn wrap(self, loc: impl IntoSourceLoc<'src>) -> Error<'src> {
+    pub fn wrap(self, loc: impl IntoSourceLoc) -> Error {
         Error {
             location: loc.into_source_location(),
             content: self,
@@ -133,7 +135,9 @@ impl<'src> ErrorContent<'src> {
             Self::NonUIntForArrLen => "Array length should be an unsigned integer".to_string(),
             Self::TypeExprStackOverflow => "Type expression exceeds stack limit".to_string(),
             Self::ExprNotAllowedAtTopLevel => "Consider wrapping this into a function".to_string(),
-            Self::ExprNotAllowedAsFnBody => "This expression is allowed as a statement in function body".to_string(),
+            Self::ExprNotAllowedAsFnBody => {
+                "This expression is allowed as a statement in function body".to_string()
+            }
             Self::ExprNotAllowedAsChild => "This expression is not allowed here".to_string(),
             Self::InvalidMemberAccess => "No such path exists".to_string(),
         }
@@ -141,13 +145,13 @@ impl<'src> ErrorContent<'src> {
 }
 
 #[derive(Debug, Clone)]
-pub struct Error<'src> {
-    pub location: SourceLocation<'src>,
-    pub content: ErrorContent<'src>,
+pub struct Error {
+    pub location: SourceLocation,
+    pub content: ErrorContent,
 }
 
-impl<'src> Error<'src> {
-    pub fn collect_into(self, collector: &ErrorCollector<'src>) {
+impl Error {
+    pub fn collect_into(self, collector: &ErrorCollector) {
         collector.collect(self)
     }
 }
@@ -155,16 +159,16 @@ impl<'src> Error<'src> {
 /// A container that collects all compile errors
 /// Uses internal mutability because it is write-only
 #[derive(Debug, Clone, Default)]
-pub struct ErrorCollector<'src> {
-    errors: RefCell<Vec<Error<'src>>>,
+pub struct ErrorCollector {
+    errors: RefCell<Vec<Error>>,
 }
 
-impl<'a> ErrorCollector<'a> {
-    pub fn collect(&self, e: Error<'a>) {
+impl ErrorCollector {
+    pub fn collect(&self, e: Error) {
         self.errors.borrow_mut().push(e);
     }
     /// Print the errors in it's final presentation format, and remove all the errors
-    pub fn print_and_dump_all(&self, sources: &'a BufferedContent<'a>) {
+    pub fn print_and_dump_all(&self, sources: &BufferedContent) {
         // TODO: If multiple errors happen in one line, print them in one block
         let mut current_filename = "";
         let mut current_file_content = "";
@@ -216,17 +220,16 @@ fn print_err(
     col_num: usize,
     len: usize,
 ) {
+    use term_color::AnsiEscCode::*;
     // TODO: only show a slice of the line if the line is too long
     print!(
-        "{} {}\n    {}\n\n",
-        "-->".blue().bold(),
+        "{FgBlue}-->{ResetColor} {}\n    {}\n\n",
         format!(
             "{}:{}:{}",
             err.location.file_name.escape_default(),
             line_num + 1,
             col_num + 1,
-        )
-        .bold(),
+        ),
         err.content.name(),
     );
     let line_text = &file_content[line_start..line_end];
@@ -239,24 +242,24 @@ fn print_err(
         }
     }
     if len == 0 {
-        print!("{}", "^".red().bold())
+        print!("{FgRed}^{ResetColor}")
     } else {
         for _ in 0..=len {
-            print!("{}", "~".red().bold())
+            print!("{FgRed}~{ResetColor}")
         }
     }
-    println!(" {}", err.content.description().red().bold());
+    println!(" {FgRed}{}{ResetColor}", err.content.description());
 }
 
-pub trait CollectIfErr<'src> {
+pub trait CollectIfErr {
     type Product;
-    fn collect_err(self, err_collector: &ErrorCollector<'src>) -> Self::Product;
+    fn collect_err(self, err_collector: &ErrorCollector) -> Self::Product;
 }
 
-impl<'src, T> CollectIfErr<'src> for Result<T, Error<'src>> {
+impl<T> CollectIfErr for Result<T, Error> {
     type Product = Option<T>;
 
-    fn collect_err(self, err_collector: &ErrorCollector<'src>) -> Self::Product {
+    fn collect_err(self, err_collector: &ErrorCollector) -> Self::Product {
         match self {
             Ok(shitfuck) => Some(shitfuck),
             Err(e) => {

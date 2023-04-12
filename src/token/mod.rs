@@ -4,16 +4,6 @@ use crate::error::location::{IntoSourceLoc, Traced};
 
 pub mod tokenizer;
 
-/// Because of macros expansions, there are multiple character iterators existing at the same time,
-/// they are stored in a stack
-/// Everytime a macro expansion is needed, a new iterator will be pushed onto the stack
-/// When fetching
-/// For fetching a character, a character is attempted to be fetched from the top most of the
-/// character, if that iterator has depleted, it will be poped off and the process will be repeated
-/// again until the stack is empty
-/// In some cases, the iterator will output tokens instead of characters
-mod iterstack;
-
 #[allow(dead_code)]
 #[derive(Clone, Copy)]
 pub enum NumValue {
@@ -55,10 +45,10 @@ impl From<f64> for NumValue {
 }
 
 #[derive(Debug, Clone)]
-pub enum Token<'a> {
+pub enum Token {
     // --- Values
     /// Identifier name string is sliced from the source string, owned by `BufferedSources`
-    Identifier(&'a str),
+    Identifier(&'static str),
     Number(NumValue),
     Character(char),
     /// Unlike `Identifier`, contents of string literals are owned and not sliced from the source
@@ -144,12 +134,12 @@ pub enum Token<'a> {
     LeLeEq, // <<=
     GrGrEq,
 }
-impl<'src> Token<'src> {
+impl Token {
     /// Wrap the token into `Traced<Token>`
-    pub fn wrap_loc(self, loc: impl IntoSourceLoc<'src>) -> Traced<'src, Self> {
+    pub fn wrap_loc(self, loc: impl IntoSourceLoc) -> Traced<Self> {
         Traced::new(self, loc.into_source_location())
     }
-    pub fn expect_identifier(&self) -> Option<&'src str> {
+    pub fn expect_identifier(&self) -> Option<&'static str> {
         match self {
             Token::Identifier(s) => Some(s),
             _ => None,

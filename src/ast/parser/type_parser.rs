@@ -12,19 +12,19 @@ const TYPE_PARSER_RECURSIVE_LIMIT: usize = 256;
 /// Returns `None` if unexpected EOF, errors handled internally
 #[inline]
 #[must_use]
-pub fn parse_type_expr<'src>(
-    parser: &mut AstParser<'src>,
-    current_loc: SourceLocation<'src>,
-) -> Result<TypeExpr<'src>, Error<'src>> {
+pub fn parse_type_expr(
+    parser: &mut AstParser,
+    current_loc: SourceLocation,
+) -> Result<TypeExpr, Error> {
     Ok(parse_type_expr_node(parser, current_loc, 0)?)
 }
 
 #[must_use]
-fn parse_type_expr_node<'s>(
-    parser: &mut AstParser<'s>,
-    current_loc: SourceLocation<'s>,
+fn parse_type_expr_node(
+    parser: &mut AstParser,
+    current_loc: SourceLocation,
     recursive_counter: usize,
-) -> Result<TypeExpr<'s>, Error<'s>> {
+) -> Result<TypeExpr, Error> {
     if recursive_counter >= TYPE_PARSER_RECURSIVE_LIMIT {
         return Err(ErrorContent::TypeExprStackOverflow.wrap(current_loc));
     }
@@ -84,7 +84,7 @@ fn parse_type_expr_node<'s>(
                     let len = len
                         .as_unsigned()
                         .ok_or(ErrorContent::NonUIntForArrLen.wrap(peeked_location))
-                        .collect_err(parser.err_collector)
+                        .collect_err(&parser.err_collector)
                         .unwrap_or(0);
                     parser.token_stream.next();
                     let peeked_token = parser
@@ -105,7 +105,7 @@ fn parse_type_expr_node<'s>(
             }
         }
         Token::RoundParenOpen => {
-            let mut children = Vec::<TypeExpr<'s>>::new();
+            let mut children = Vec::<TypeExpr>::new();
             loop {
                 let peeked_token = parser
                     .token_stream
@@ -149,7 +149,7 @@ fn parse_type_expr_node<'s>(
                 Token::RoundParenOpen => (),
                 _ => return Err(ErrorContent::ExpectToken(Token::RoundParenOpen).wrap(token_loc)),
             }
-            let mut args = Vec::<TypeExpr<'s>>::new();
+            let mut args = Vec::<TypeExpr>::new();
             loop {
                 let peeked_token = parser
                     .token_stream

@@ -7,11 +7,11 @@ use crate::string::SourceIndex;
 
 /// Describes the location of a token or an AST node in source code
 #[derive(Clone, Copy, PartialEq, Eq)]
-pub struct SourceLocation<'src> {
-    pub file_name: &'src str,
+pub struct SourceLocation {
+    pub file_name: &'static str,
     pub range: (usize, usize),
 }
-impl Debug for SourceLocation<'_> {
+impl Debug for SourceLocation {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
             f,
@@ -22,7 +22,7 @@ impl Debug for SourceLocation<'_> {
         )
     }
 }
-impl Display for SourceLocation<'_> {
+impl Display for SourceLocation {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
             f,
@@ -34,81 +34,81 @@ impl Display for SourceLocation<'_> {
     }
 }
 
-pub trait IntoSourceLoc<'a> {
-    fn into_source_location(self) -> SourceLocation<'a>;
+pub trait IntoSourceLoc {
+    fn into_source_location(self) -> SourceLocation;
 }
-impl<'a> IntoSourceLoc<'a> for SourceLocation<'a> {
+impl IntoSourceLoc for SourceLocation {
     #[inline]
-    fn into_source_location(self) -> SourceLocation<'a> {
+    fn into_source_location(self) -> SourceLocation {
         self
     }
 }
-impl<'a> IntoSourceLoc<'a> for (&'a str, SourceIndex<'a>) {
+impl IntoSourceLoc for (&'static str, SourceIndex) {
     #[inline]
-    fn into_source_location(self) -> SourceLocation<'a> {
+    fn into_source_location(self) -> SourceLocation {
         SourceLocation {
             file_name: self.0,
             range: (self.1.position, self.1.position),
         }
     }
 }
-impl<'a> IntoSourceLoc<'a> for (&'a str, (SourceIndex<'a>, SourceIndex<'a>)) {
+impl IntoSourceLoc for (&'static str, (SourceIndex, SourceIndex)) {
     #[inline]
-    fn into_source_location(self) -> SourceLocation<'a> {
+    fn into_source_location(self) -> SourceLocation {
         SourceLocation {
             file_name: self.0,
             range: (self.1 .0.position, self.1 .1.position),
         }
     }
 }
-impl<'a> IntoSourceLoc<'a> for (&'a str, SourceIndex<'a>, SourceIndex<'a>) {
+impl IntoSourceLoc for (&'static str, SourceIndex, SourceIndex) {
     #[inline]
-    fn into_source_location(self) -> SourceLocation<'a> {
+    fn into_source_location(self) -> SourceLocation {
         SourceLocation {
             file_name: self.0,
             range: (self.1.position, self.2.position),
         }
     }
 }
-impl<'a> IntoSourceLoc<'a> for (&'a str, Range<SourceIndex<'a>>) {
+impl IntoSourceLoc for (&'static str, Range<SourceIndex>) {
     #[inline]
-    fn into_source_location(self) -> SourceLocation<'a> {
+    fn into_source_location(self) -> SourceLocation {
         SourceLocation {
             file_name: self.0,
             range: (self.1.start.position, self.1.end.position),
         }
     }
 }
-impl<'a> IntoSourceLoc<'a> for (&'a str, usize) {
+impl IntoSourceLoc for (&'static str, usize) {
     #[inline]
-    fn into_source_location(self) -> SourceLocation<'a> {
+    fn into_source_location(self) -> SourceLocation {
         SourceLocation {
             file_name: self.0,
             range: (self.1, self.1),
         }
     }
 }
-impl<'a> IntoSourceLoc<'a> for (&'a str, (usize, usize)) {
+impl IntoSourceLoc for (&'static str, (usize, usize)) {
     #[inline]
-    fn into_source_location(self) -> SourceLocation<'a> {
+    fn into_source_location(self) -> SourceLocation {
         SourceLocation {
             file_name: self.0,
             range: (self.1 .0, self.1 .1),
         }
     }
 }
-impl<'a> IntoSourceLoc<'a> for (&'a str, usize, usize) {
+impl IntoSourceLoc for (&'static str, usize, usize) {
     #[inline]
-    fn into_source_location(self) -> SourceLocation<'a> {
+    fn into_source_location(self) -> SourceLocation {
         SourceLocation {
             file_name: self.0,
             range: (self.1, self.2),
         }
     }
 }
-impl<'a> IntoSourceLoc<'a> for (&'a str, Range<usize>) {
+impl IntoSourceLoc for (&'static str, Range<usize>) {
     #[inline]
-    fn into_source_location(self) -> SourceLocation<'a> {
+    fn into_source_location(self) -> SourceLocation {
         SourceLocation {
             file_name: self.0,
             range: (self.1.start, self.1.end),
@@ -118,12 +118,12 @@ impl<'a> IntoSourceLoc<'a> for (&'a str, Range<usize>) {
 
 /// A wrapper for attaching a source location to a token or AST node
 #[derive(Clone, PartialEq)]
-pub struct Traced<'src, T> {
+pub struct Traced<T> {
     inner: T,
-    src_loc: SourceLocation<'src>,
+    src_loc: SourceLocation,
 }
 
-impl<'src, T> Default for Traced<'src, T>
+impl< T> Default for Traced< T>
 where
     T: Default,
 {
@@ -138,7 +138,7 @@ where
     }
 }
 
-impl<'src, T> Traced<'src, T> {
+impl< T> Traced< T> {
     /// Wrap an thing into `Traced`
     /// Call this function by...
     /// ```
@@ -149,7 +149,7 @@ impl<'src, T> Traced<'src, T> {
     /// Traced::new(x, SourceLocation {file_name, range: (start, end)})
     /// ```
     /// ... Or anything else that implements `IntoSourceLoc`
-    pub fn new(inner: T, src_loc: impl IntoSourceLoc<'src>) -> Self {
+    pub fn new(inner: T, src_loc: impl IntoSourceLoc) -> Self {
         Self {
             inner,
             src_loc: src_loc.into_source_location(),
@@ -170,18 +170,18 @@ impl<'src, T> Traced<'src, T> {
     /// Returns the attached source location
     #[inline]
     #[must_use]
-    pub fn src_loc(&self) -> SourceLocation<'src> {
+    pub fn src_loc(&self) -> SourceLocation {
         self.src_loc
     }
 }
-impl<'src, T> Deref for Traced<'src, T> {
+impl< T> Deref for Traced< T> {
     type Target = T;
 
     fn deref(&self) -> &Self::Target {
         &self.inner
     }
 }
-impl<'src, T> Debug for Traced<'src, T>
+impl< T> Debug for Traced< T>
 where
     T: Debug,
 {
@@ -189,7 +189,7 @@ where
         self.deref().fmt(f)
     }
 }
-impl<'src, T> Display for Traced<'src, T>
+impl< T> Display for Traced< T>
 where
     T: Display,
 {

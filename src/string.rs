@@ -1,11 +1,10 @@
 use std::{
     fmt::{Debug, Display},
-    marker::PhantomData,
     ops::Range,
     slice,
 };
 
-/// An immutable string type that allows O(1) indexing using `SourceIndex`.
+/// An immutable, leaked string type that allows O(1) indexing using `SourceIndex`.
 /// `SourceIndex` can only be obtained by `SourceCharIndices.next`.
 /// Doesn't implement `Index` because it requires lifetime of `SourceIndex` to match
 /// `SourceString`.
@@ -20,9 +19,9 @@ use std::{
 ///
 /// assert_eq!(string.slice(index0..index1), "Привет");
 /// ```
-#[derive(Clone, PartialEq, Eq)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 pub struct SourceString {
-    raw: String,
+    raw: &'static str,
 }
 
 impl SourceString {
@@ -43,7 +42,7 @@ impl SourceString {
     /// let nihao = string.slice(index0..index1);
     /// assert_eq!(nihao, "你好");
     /// ```
-    pub fn char_indices<'a>(&'a self) -> SourceCharIndices<'a> {
+    pub fn char_indices(self) -> SourceCharIndices {
         SourceCharIndices {
             iter: self.as_bytes().iter(),
             i: 0,
@@ -65,7 +64,7 @@ impl SourceString {
     /// assert_eq!(string.slice(index0..index1), "Привет");
     /// ```
     #[inline]
-    pub fn slice<'a>(&'a self, index: Range<SourceIndex<'a>>) -> &'a str {
+    pub fn slice(self, index: Range<SourceIndex>) -> &'static str {
         let bytes = self
             .as_bytes()
             .get(index.start.raw..index.end.raw + index.end.len);
@@ -80,14 +79,8 @@ impl SourceString {
     }
 }
 
-impl From<&'_ str> for SourceString {
-    fn from(s: &'_ str) -> Self {
-        Self { raw: s.to_string() }
-    }
-}
-
-impl From<String> for SourceString {
-    fn from(s: String) -> Self {
+impl From<&'static str> for SourceString {
+    fn from(s: &'static str) -> Self {
         Self { raw: s }
     }
 }
@@ -107,31 +100,30 @@ impl Display for SourceString {
 impl SourceString {
     #[must_use]
     #[inline]
-    pub fn as_str<'a>(&'a self) -> &'a str {
-        self.raw.as_str()
+    pub fn as_str(self) -> &'static str {
+        self.raw
     }
 
     #[must_use]
     #[inline]
-    pub fn as_bytes<'a>(&'a self) -> &'a [u8] {
+    pub fn as_bytes(self) -> &'static [u8] {
         self.raw.as_bytes()
     }
 }
 
 /// An index pointing to a raw position in the source string
-/// **INDEXED PRODUCED FROM ONE SOURCE STRING CAN NEVER BE USED ON ANOTHER SOURCE STRING**
+/// # Safety
+/// Index produced from one source can never be used in another source string
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub struct SourceIndex<'a> {
+pub struct SourceIndex {
     raw: usize,
     /// length of the character (in bytes)
     len: usize,
     /// The index of the character in the string
     pub position: usize,
-    /// `SourceIndex` can't live outside of the `S
-    lifetime_lock: PhantomData<&'a ()>,
 }
 
-impl SourceIndex<'_> {
+impl SourceIndex {
     #[allow(dead_code)]
     #[inline]
     pub unsafe fn raw_index(self) -> usize {
@@ -196,16 +188,16 @@ unsafe fn next_code_point_indexed<'a, I: Iterator<Item = &'a u8>>(
 }
 
 #[derive(Clone, Debug)]
-pub struct SourceCharIndices<'a> {
-    iter: slice::Iter<'a, u8>,
+pub struct SourceCharIndices {
+    iter: slice::Iter<'static, u8>,
     i: usize,
     raw_index: usize,
 }
 
-impl<'a> Iterator for SourceCharIndices<'a> {
-    type Item = (SourceIndex<'a>, char);
+impl Iterator for SourceCharIndices {
+    type Item = (SourceIndex, char);
 
-    fn next(&mut self) -> Option<(SourceIndex<'a>, char)> {
+    fn next(&mut self) -> Option<(SourceIndex, char)> {
         unsafe {
             let (len, ch) = next_code_point_indexed(&mut self.iter)?;
             let raw_index = self.raw_index;
@@ -219,7 +211,6 @@ impl<'a> Iterator for SourceCharIndices<'a> {
                     raw: raw_index,
                     len,
                     position,
-                    lifetime_lock: PhantomData,
                 },
                 ch,
             ))

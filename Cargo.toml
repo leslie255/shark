@@ -6,6 +6,9 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-colored = "2"
-cranelift = "*"
-cranelift-codegen = "*"
+cranelift = "0.94.0"
+cranelift-codegen = "0.94.0"
+cranelift-frontend = "0.94.0"
+cranelift-native = "0.94.0"
+cranelift-object = "0.94.0"
+cranelift-module = "0.94.0"
