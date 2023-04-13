@@ -69,9 +69,9 @@ pub enum AstNode {
     BitNot(AstNodeRef),
     BoolNot(AstNodeRef),
     /// used when a minus sign is in front of a number, such as `-255`
-    MinusNum(AstNodeRef),
+    UnarySub(AstNodeRef),
     /// used when a plus sign is in front of a number, such as `+255`
-    PlusNum(AstNodeRef),
+    UnaryAdd(AstNodeRef),
 
     Call(AstNodeRef, Vec<AstNodeRef>),
 
@@ -95,6 +95,7 @@ pub enum AstNode {
     Return(Option<AstNodeRef>),
     Break,
     Continue,
+    Tail(AstNodeRef),
 
     Typecast(AstNodeRef, TypeExpr),
 

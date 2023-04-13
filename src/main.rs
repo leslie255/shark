@@ -1,5 +1,4 @@
 #![feature(string_leak)]
-
 #![allow(dead_code)]
 
 mod ast;

@@ -11,6 +11,19 @@ pub struct SourceLocation {
     pub file_name: &'static str,
     pub range: (usize, usize),
 }
+
+impl SourceLocation {
+    /// Make another source location by using the file name and starting position of `self` and
+    /// ending position of `other`
+    pub fn join(self, other: Self) -> Self {
+        (self.file_name, self.range.0, other.range.1).into_source_location()
+    }
+
+    /// Make another source location by using the file name and ending position of `self`
+    pub fn end(self) -> Self {
+        (self.file_name, self.range.1).into_source_location()
+    }
+}
 impl Debug for SourceLocation {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
@@ -123,7 +136,7 @@ pub struct Traced<T> {
     src_loc: SourceLocation,
 }
 
-impl< T> Default for Traced< T>
+impl<T> Default for Traced<T>
 where
     T: Default,
 {
@@ -138,7 +151,7 @@ where
     }
 }
 
-impl< T> Traced< T> {
+impl<T> Traced<T> {
     /// Wrap an thing into `Traced`
     /// Call this function by...
     /// ```
@@ -174,14 +187,14 @@ impl< T> Traced< T> {
         self.src_loc
     }
 }
-impl< T> Deref for Traced< T> {
+impl<T> Deref for Traced<T> {
     type Target = T;
 
     fn deref(&self) -> &Self::Target {
         &self.inner
     }
 }
-impl< T> Debug for Traced< T>
+impl<T> Debug for Traced<T>
 where
     T: Debug,
 {
@@ -189,7 +202,7 @@ where
         self.deref().fmt(f)
     }
 }
-impl< T> Display for Traced< T>
+impl<T> Display for Traced<T>
 where
     T: Display,
 {

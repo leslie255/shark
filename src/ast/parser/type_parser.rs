@@ -68,11 +68,6 @@ fn parse_type_expr_node(
             // If the next token is `]`, it's a slice, if it's an number then it's an array
             // But first make a macro to report a no closing rect paren error because it will
             // be used twice
-            macro_rules! ret_no_closing_paren_err {
-                ($loc: expr) => {{
-                    return Err(ErrorContent::SliceNoClosingParen.wrap($loc));
-                }};
-            }
             match peeked_token.inner() {
                 Token::RectParenClose => {
                     parser.token_stream.next();
@@ -95,13 +90,13 @@ fn parse_type_expr_node(
                     if let Token::RectParenClose = peeked_token.inner() {
                         parser.token_stream.next();
                     } else {
-                        ret_no_closing_paren_err!(peeked_location)
+                        return Err(ErrorContent::SliceNoClosingParen.wrap(peeked_location));
                     }
                     let child =
                         parse_type_expr_node(parser, peeked_location, recursive_counter + 1)?;
                     TypeExpr::Array(len, Box::new(child))
                 }
-                _ => ret_no_closing_paren_err!(peeked_location),
+                _ => return Err(ErrorContent::SliceNoClosingParen.wrap(peeked_location)),
             }
         }
         Token::RoundParenOpen => {
@@ -191,9 +186,7 @@ fn parse_type_expr_node(
                         parser.token_stream.next();
                         parse_type_expr_node(parser, current_loc, recursive_counter + 1)?
                     }
-                    _ => {
-                        TypeExpr::void()
-                    }
+                    _ => TypeExpr::void(),
                 }
             };
             TypeExpr::Fn(args, Box::new(ret_type))
