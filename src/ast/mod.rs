@@ -176,12 +176,12 @@ impl AstNodeRef {
 
 /// Signature of a function
 #[derive(Clone)]
-pub struct FnSignature {
+pub struct Signature {
     pub args: Vec<(&'static str, TypeExpr)>,
     pub ret_type: TypeExpr,
 }
 
-impl Debug for FnSignature {
+impl Debug for Signature {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let arg_count = self.args.len();
         match arg_count {
@@ -219,7 +219,7 @@ impl Debug for FnSignature {
 #[derive(Clone)]
 pub struct FnDef {
     pub name: &'static str,
-    pub sign: FnSignature,
+    pub sign: Signature,
     pub body: Option<Vec<AstNodeRef>>,
 }
 

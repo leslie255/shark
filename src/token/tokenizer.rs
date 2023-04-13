@@ -403,6 +403,7 @@ impl Iterator for TokenStream {
                 (i, ':') => Some(Token::Colon.wrap_loc((self.path, i, i))),
                 (i, ';') => Some(Token::Semicolon.wrap_loc((self.path, i, i))),
                 (i, '.') => Some(Token::Dot.wrap_loc((self.path, i, i))),
+                (i, ',') => Some(Token::Comma.wrap_loc((self.path, i, i))),
 
                 (i, '+') => match self.iter.peek().clone() {
                     Some(&(i0, '=')) => next_and_ret_token!(AddEq, i, i0),

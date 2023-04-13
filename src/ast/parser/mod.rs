@@ -15,7 +15,7 @@ use crate::{
 use self::type_parser::parse_type_expr;
 
 use super::{
-    type_expr::TypeExpr, Ast, AstNode, AstNodeRef, EnumDef, FnDef, FnSignature, IfExpr, MathOpKind,
+    type_expr::TypeExpr, Ast, AstNode, AstNodeRef, EnumDef, FnDef, Signature, IfExpr, MathOpKind,
     StructOrUnionDef,
 };
 
@@ -861,7 +861,7 @@ impl AstParser {
 
         let node = AstNode::FnDef(FnDef {
             name,
-            sign: FnSignature { args, ret_type },
+            sign: Signature { args, ret_type },
             body,
         });
         Some(node.traced((start_loc.file_name, start_loc.range.0, end_loc)))
