@@ -4,12 +4,24 @@ use crate::ast::{type_expr::TypeExpr, Signature};
 use cranelift::prelude::{
     types as clif_types, AbiParam, Signature as ClifSignature, Type as ClifType,
 };
-use cranelift_codegen::isa::CallConv;
+use cranelift_codegen::{isa::CallConv, settings};
 
 mod context;
 mod typecheck;
 
+use cranelift_object::{ObjectBuilder, ObjectModule};
+
 pub use context::{build_global_context, GlobalContext};
+
+pub fn make_empty_obj_module(name: &str) -> ObjectModule {
+    let isa = cranelift_native::builder()
+        .expect("Error getting the native ISA")
+        .finish(settings::Flags::new(settings::builder()))
+        .unwrap();
+    let obj_builder =
+        ObjectBuilder::new(isa, name, cranelift_module::default_libcall_names()).unwrap();
+    ObjectModule::new(obj_builder)
+}
 
 #[derive(Debug, Clone)]
 pub(self) enum CollectiveType {
@@ -26,7 +38,7 @@ impl CollectiveType {
             CollectiveType::Multi(vec) => vec.as_slice(),
         }
     }
-    pub fn fields<'short>(&'short self) -> Fields<'short> {
+    pub fn fields(&self) -> Fields {
         match self {
             CollectiveType::Empty => Fields::Empty,
             &CollectiveType::Single([ty]) => Fields::Single(ty),

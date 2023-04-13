@@ -14,8 +14,6 @@ use std::{env, rc::Rc};
 
 use ast::parser::AstParser;
 use buffered_content::BufferedContent;
-use cranelift_codegen::settings;
-use cranelift_object::{ObjectBuilder, ObjectModule};
 use error::ErrorCollector;
 
 fn main() {
@@ -25,16 +23,11 @@ fn main() {
     let buffers = Rc::new(BufferedContent::default());
     let err_collector = Rc::new(ErrorCollector::default());
     let mut ast_parser = AstParser::new(&file_name, Rc::clone(&buffers), Rc::clone(&err_collector));
-    let obj_module = {
-        let isa = cranelift_native::builder()
-            .expect("Error getting the native ISA")
-            .finish(settings::Flags::new(settings::builder()))
-            .unwrap();
-        let obj_builder =
-            ObjectBuilder::new(isa, "output", cranelift_module::default_libcall_names()).unwrap();
-        ObjectModule::new(obj_builder)
-    };
-    let global_context = gen::build_global_context(&mut ast_parser, obj_module, Rc::clone(&err_collector));
+    let global_context = gen::build_global_context(
+        &mut ast_parser,
+        gen::make_empty_obj_module("output"),
+        Rc::clone(&err_collector),
+    );
     dbg!(global_context);
 
     err_collector.print_and_dump_all(&buffers);
