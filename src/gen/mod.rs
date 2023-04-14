@@ -13,7 +13,7 @@ use cranelift_codegen::{
 mod context;
 mod typecheck;
 
-use cranelift_frontend::{FunctionBuilder, Variable};
+use cranelift_frontend::{FunctionBuilder, FunctionBuilderContext, Variable};
 use cranelift_object::{ObjectBuilder, ObjectModule};
 
 pub use context::{build_global_context, GlobalContext};
@@ -136,15 +136,38 @@ fn trans_ty(global: &GlobalContext, ty: &TypeExpr) -> CollectiveType {
     }
 }
 
-fn gen_expr(global: &GlobalContext, local: &mut LocalContext, node: &AstNode) -> Option<()> {
-    todo!()
+fn gen_expr(
+    builder: &mut FunctionBuilder<'_>,
+    global: &GlobalContext,
+    local: &mut LocalContext,
+    node: &AstNodeRef,
+) -> Option<()> {
+    match node.inner() {
+        &AstNode::Identifier(name) => {
+            // a quick test
+            let var = local
+                .var(name)
+                .ok_or(ErrorContent::UndefinedVar(name).wrap(node.src_loc()))
+                .collect_err(&global.err_collector)?
+                .offset(0);
+            let val = builder.use_var(var);
+            println!("variable `{name}` => {val}")
+        }
+        node => println!("skipping: {node:?}"),
+    }
+    Some(())
 }
 
-fn gen_block(global: &GlobalContext, local: &mut LocalContext, body: &[AstNodeRef]) -> Option<()> {
+fn gen_block(
+    builder: &mut FunctionBuilder<'_>,
+    global: &GlobalContext,
+    local: &mut LocalContext,
+    body: &[AstNodeRef],
+) -> Option<()> {
     for node in body {
-        gen_expr(global, local, node);
+        gen_expr(builder, global, local, node);
     }
-    todo!()
+    Some(())
 }
 
 fn gen_function(global: &mut GlobalContext, func: &Function, loc: SourceLocation) -> Option<()> {
@@ -161,7 +184,8 @@ fn gen_function(global: &mut GlobalContext, func: &Function, loc: SourceLocation
         UserFuncName::user(0, func_info.index),
         func_info.clif_sig.clone(),
     );
-    let mut builder = FunctionBuilder::new(&mut clif_func, &mut global.func_builder_ctx);
+    let mut func_builder_context = FunctionBuilderContext::new();
+    let mut builder = FunctionBuilder::new(&mut clif_func, &mut func_builder_context);
     let entry_block = {
         let b = builder.create_block();
         builder.switch_to_block(b);
@@ -191,12 +215,12 @@ fn gen_function(global: &mut GlobalContext, func: &Function, loc: SourceLocation
     );
     local.id_counter = builder.block_params(entry_block).len();
 
-    gen_block(global, &mut local, &body);
+    gen_block(&mut builder, global, &mut local, &body);
 
     Some(())
 }
 
-fn compile(global: &mut GlobalContext, ast: &Ast) {
+pub fn compile(global: &mut GlobalContext, ast: &Ast) {
     for node in &ast.root_nodes {
         let loc = node.src_loc();
         match node.inner() {

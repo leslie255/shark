@@ -760,6 +760,7 @@ impl AstParser {
                     self.token_stream.next();
                     let peek = peek_token!(self, start_loc);
                     end_loc = peek.src_loc();
+                    nodes.push(node);
                     match peek.inner() {
                         Token::BraceClose => {
                             self.token_stream.next();

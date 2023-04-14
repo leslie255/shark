@@ -23,12 +23,14 @@ fn main() {
     let buffers = Rc::new(BufferedContent::default());
     let err_collector = Rc::new(ErrorCollector::default());
     let mut ast_parser = AstParser::new(&file_name, Rc::clone(&buffers), Rc::clone(&err_collector));
-    let global_context = gen::build_global_context(
+    let mut global_context = gen::build_global_context(
         &mut ast_parser,
         gen::make_empty_obj_module("output"),
         Rc::clone(&err_collector),
     );
-    dbg!(global_context);
+    dbg!(&global_context);
+    
+    gen::compile(&mut global_context, &ast_parser.ast);
 
     err_collector.print_and_dump_all(&buffers);
 }

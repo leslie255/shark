@@ -1,7 +1,7 @@
-fn main(args: []u8) -> i32 {
-    0
-}
-
-fn blyat() {
+fn f(x: i64, y: u32, z: *u8) {
+    a;
+    x;
+    y;
+    z;
 }
 

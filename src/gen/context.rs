@@ -5,9 +5,9 @@ use std::{
     rc::Rc,
 };
 
-use cranelift::prelude::{AbiParam, Block, Signature as ClifSignature};
+use cranelift::prelude::{AbiParam, Block, Signature as ClifSignature, EntityRef};
 use cranelift_codegen::{ir::FuncRef, isa::CallConv};
-use cranelift_frontend::FunctionBuilderContext;
+use cranelift_frontend::Variable;
 use cranelift_module::{Linkage, Module};
 use cranelift_object::ObjectModule;
 
@@ -33,6 +33,12 @@ impl VarInfo {
             flat_ty,
             clif_vars,
         }
+    }
+
+    pub fn offset(&self,offset: usize) -> Variable {
+        let id =self.clif_vars.start+offset;
+        assert!(id<self.clif_vars.end);
+        Variable::new(id)
     }
 
     pub fn ty(&self) -> &TypeExpr {
@@ -189,7 +195,6 @@ pub struct GlobalContext {
     /// Map from function name to Id and signature of the function
     funcs: HashMap<&'static str, FuncInfo>,
     pub obj_module: ObjectModule,
-    pub func_builder_ctx: FunctionBuilderContext,
     pub err_collector: Rc<ErrorCollector>,
 }
 
@@ -208,7 +213,6 @@ impl GlobalContext {
         Self {
             funcs: HashMap::new(),
             obj_module,
-            func_builder_ctx: FunctionBuilderContext::new(),
             err_collector,
         }
     }
