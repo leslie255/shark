@@ -1,4 +1,4 @@
-fn main(argc: u32, argv: *u8) -> i32 {
+fn main(args: []u8) -> i32 {
     0
 }
 

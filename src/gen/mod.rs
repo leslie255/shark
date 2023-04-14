@@ -1,17 +1,24 @@
 use std::slice::Iter;
 
-use crate::ast::{type_expr::TypeExpr, Signature};
-use cranelift::prelude::{
-    types as clif_types, AbiParam, Signature as ClifSignature, Type as ClifType,
+use crate::{
+    ast::{type_expr::TypeExpr, Ast, AstNode, AstNodeRef, Function},
+    error::{location::SourceLocation, CollectIfErr, ErrorContent},
 };
-use cranelift_codegen::{isa::CallConv, settings};
+use cranelift::prelude::{types as clif_types, EntityRef, Type as ClifType};
+use cranelift_codegen::{
+    ir::{Function as ClifFunction, UserFuncName},
+    settings,
+};
 
 mod context;
 mod typecheck;
 
+use cranelift_frontend::{FunctionBuilder, Variable};
 use cranelift_object::{ObjectBuilder, ObjectModule};
 
 pub use context::{build_global_context, GlobalContext};
+
+use self::context::LocalContext;
 
 pub fn make_empty_obj_module(name: &str) -> ObjectModule {
     let isa = cranelift_native::builder()
@@ -23,11 +30,17 @@ pub fn make_empty_obj_module(name: &str) -> ObjectModule {
     ObjectModule::new(obj_builder)
 }
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub(self) enum CollectiveType {
     Empty,
     Single([ClifType; 1]),
     Multi(Vec<ClifType>),
+}
+
+impl std::fmt::Debug for CollectiveType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.as_slice().fmt(f)
+    }
 }
 
 impl CollectiveType {
@@ -38,11 +51,20 @@ impl CollectiveType {
             CollectiveType::Multi(vec) => vec.as_slice(),
         }
     }
+
     pub fn fields(&self) -> Fields {
         match self {
             CollectiveType::Empty => Fields::Empty,
             &CollectiveType::Single([ty]) => Fields::Single(ty),
             CollectiveType::Multi(x) => Fields::Multi(x.iter()),
+        }
+    }
+
+    pub fn len(&self) -> usize {
+        match self {
+            CollectiveType::Empty => 0,
+            CollectiveType::Single(..) => 1,
+            CollectiveType::Multi(vec) => vec.len(),
         }
     }
 }
@@ -114,15 +136,74 @@ fn trans_ty(global: &GlobalContext, ty: &TypeExpr) -> CollectiveType {
     }
 }
 
-fn trans_sig(global: &GlobalContext, sig: &Signature) -> ClifSignature {
-    let mut clif_sig = ClifSignature::new(CallConv::SystemV);
-    clif_sig.params.reserve(sig.args.len());
-    for (_, ty) in sig.args.iter() {
-        let collective = trans_ty(global, ty);
-        collective
-            .fields()
-            .map(AbiParam::new)
-            .for_each(|t| clif_sig.params.push(t));
+fn gen_expr(global: &GlobalContext, local: &mut LocalContext, node: &AstNode) -> Option<()> {
+    todo!()
+}
+
+fn gen_block(global: &GlobalContext, local: &mut LocalContext, body: &[AstNodeRef]) -> Option<()> {
+    for node in body {
+        gen_expr(global, local, node);
     }
-    clif_sig
+    todo!()
+}
+
+fn gen_function(global: &mut GlobalContext, func: &Function, loc: SourceLocation) -> Option<()> {
+    // make sure the function has a body first
+    let body = func
+        .body
+        .as_ref()
+        .ok_or(ErrorContent::FuncWithoutBody.wrap(loc))
+        .collect_err(&global.err_collector)?;
+
+    let func_info = global.func(func.name).unwrap();
+    let args = func_info.args.clone();
+    let mut clif_func = ClifFunction::with_name_signature(
+        UserFuncName::user(0, func_info.index),
+        func_info.clif_sig.clone(),
+    );
+    let mut builder = FunctionBuilder::new(&mut clif_func, &mut global.func_builder_ctx);
+    let entry_block = {
+        let b = builder.create_block();
+        builder.switch_to_block(b);
+        builder.seal_block(b);
+        b
+    };
+    let ret_block = builder.create_block();
+    for arg_var_info in &args {
+        for (clif_ty, id) in arg_var_info
+            .flat_ty()
+            .fields()
+            .zip(arg_var_info.clif_vars())
+        {
+            let val = builder.append_block_param(entry_block, clif_ty);
+            let var = Variable::new(id);
+            builder.declare_var(var, clif_ty);
+            builder.def_var(var, val);
+        }
+    }
+    let mut local = LocalContext::new(
+        ret_block,
+        func.sign
+            .args
+            .iter()
+            .map(|(name, _)| *name)
+            .zip(args.into_iter()),
+    );
+    local.id_counter = builder.block_params(entry_block).len();
+
+    gen_block(global, &mut local, &body);
+
+    Some(())
+}
+
+fn compile(global: &mut GlobalContext, ast: &Ast) {
+    for node in &ast.root_nodes {
+        let loc = node.src_loc();
+        match node.inner() {
+            AstNode::FnDef(func) => {
+                gen_function(global, func, loc);
+            }
+            _ => (), // already reported the error in `build_global_context`
+        }
+    }
 }

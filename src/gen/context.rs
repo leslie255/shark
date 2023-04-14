@@ -1,11 +1,13 @@
 use std::{
     collections::{hash_map::Entry, HashMap},
-    rc::Rc, fmt::Debug,
+    fmt::Debug,
+    ops::Range,
+    rc::Rc,
 };
 
-use cranelift::prelude::{Block, EntityRef, Signature as ClifSignature};
-use cranelift_codegen::ir::FuncRef;
-use cranelift_frontend::Variable;
+use cranelift::prelude::{AbiParam, Block, Signature as ClifSignature};
+use cranelift_codegen::{ir::FuncRef, isa::CallConv};
+use cranelift_frontend::FunctionBuilderContext;
 use cranelift_module::{Linkage, Module};
 use cranelift_object::ObjectModule;
 
@@ -14,30 +16,51 @@ use crate::{
     error::{CollectIfErr, ErrorCollector, ErrorContent},
 };
 
+use super::CollectiveType;
+
 /// Information about a variable
 #[derive(Clone, Debug)]
-pub struct VarInfo {
-    pub ty: TypeExpr,
-    pub clif_var: Variable,
+pub(super) struct VarInfo {
+    ty: TypeExpr,
+    flat_ty: CollectiveType,
+    clif_vars: Range<usize>,
 }
 
 impl VarInfo {
-    pub fn new(ty: TypeExpr, clif_var: Variable) -> Self {
-        Self { ty, clif_var }
+    pub fn new(ty: TypeExpr, flat_ty: CollectiveType, clif_vars: Range<usize>) -> Self {
+        Self {
+            ty,
+            flat_ty,
+            clif_vars,
+        }
+    }
+
+    pub fn ty(&self) -> &TypeExpr {
+        &self.ty
+    }
+
+    pub fn flat_ty(&self) -> &CollectiveType {
+        &self.flat_ty
+    }
+
+    pub(super) fn clif_vars(&self) -> Range<usize> {
+        self.clif_vars.clone()
     }
 }
 
 /// Information about a function
 #[derive(Clone, Debug)]
-pub struct FuncInfo {
+pub(super) struct FuncInfo {
     pub name: &'static str,
-    pub sig: Signature,
+    pub args: Vec<VarInfo>,
+    pub ret_ty: CollectiveType,
+    pub index: u32,
     pub clif_sig: ClifSignature,
 }
 
 /// Information about the parent loop block, stored inside `LocalContext` as a stack
 #[derive(Clone, Debug)]
-pub struct LoopInfo {
+pub(super) struct LoopInfo {
     pub break_block: Block,
     pub continue_block: Block,
 }
@@ -51,22 +74,23 @@ impl LoopInfo {
     }
 }
 
-/// Keep track of symbols inside a function, includeing variables and imported functions
-#[derive(Clone, Debug)]
-pub struct LocalContext {
+/// Keep track of symbols inside a function
+/// Generates a new one for every function
+#[derive(Debug)]
+pub(super) struct LocalContext {
     imported_funcs: HashMap<&'static str, FuncRef>,
     vars: Vec<HashMap<&'static str, VarInfo>>,
-    next_var_id: usize,
+    pub id_counter: usize,
     loops: Vec<LoopInfo>,
     ret_block: Block,
 }
 
 impl LocalContext {
-    pub fn new(ret_block: Block) -> Self {
+    pub fn new(ret_block: Block, args: impl Iterator<Item = (&'static str, VarInfo)>) -> Self {
         Self {
             imported_funcs: HashMap::new(),
-            vars: vec![HashMap::new()],
-            next_var_id: 0,
+            vars: vec![args.collect()],
+            id_counter: 0,
             loops: Vec::new(),
             ret_block,
         }
@@ -116,11 +140,9 @@ impl LocalContext {
     }
 
     /// Creates a new variable and add that to the symbols
-    pub fn create_var(&mut self, name: &'static str, ty: TypeExpr) -> Variable {
-        let var = Variable::new(self.next_var_id);
-        self.var_stack_top_mut().insert(name, VarInfo::new(ty, var));
-        self.next_var_id += 1;
-        var
+    pub fn create_var(&mut self, global: &GlobalContext, name: &'static str, ty: TypeExpr) {
+        let var_info = make_var_info(global, &mut self.id_counter, ty);
+        self.var_stack_top_mut().insert(name, var_info);
     }
 
     /// Returns the variable of `name`, or exits with an error message if a variable of the
@@ -151,11 +173,24 @@ impl LocalContext {
     }
 }
 
+fn make_var_info(global: &GlobalContext, id_counter: &mut usize, ty: TypeExpr) -> VarInfo {
+    let flat_ty = super::trans_ty(global, &ty);
+    let var_ids = {
+        let start = *id_counter;
+        *id_counter += flat_ty.len();
+        let end = *id_counter;
+        start..end
+    };
+    VarInfo::new(ty, flat_ty, var_ids)
+}
+
 /// Keeps track of global symbols
 pub struct GlobalContext {
     /// Map from function name to Id and signature of the function
     funcs: HashMap<&'static str, FuncInfo>,
-    obj_module: ObjectModule,
+    pub obj_module: ObjectModule,
+    pub func_builder_ctx: FunctionBuilderContext,
+    pub err_collector: Rc<ErrorCollector>,
 }
 
 impl Debug for GlobalContext {
@@ -169,10 +204,12 @@ impl Debug for GlobalContext {
 
 impl GlobalContext {
     /// An empty global context
-    pub(self) fn prototype(obj_module: ObjectModule) -> Self {
+    pub(self) fn prototype(obj_module: ObjectModule, err_collector: Rc<ErrorCollector>) -> Self {
         Self {
             funcs: HashMap::new(),
             obj_module,
+            func_builder_ctx: FunctionBuilderContext::new(),
+            err_collector,
         }
     }
 
@@ -181,21 +218,28 @@ impl GlobalContext {
     }
 
     /// Get the `FuncInfo` of a function by its name
-    pub fn func(&self, name: &str) -> Option<&FuncInfo> {
+    pub(super) fn func(&self, name: &str) -> Option<&FuncInfo> {
         self.funcs.get(name)
     }
 
     /// Add a new function to the symbols and also declare it inside the `ObjectModule`
     /// returns `Err(())` if the function previously exists
     #[must_use]
-    pub(self) fn declare_func(&mut self, name: &'static str, sig: Signature) -> Result<(), ()> {
-        let clif_sig = super::trans_sig(self, &sig);
+    pub(self) fn declare_func(
+        &mut self,
+        name: &'static str,
+        sig: Signature,
+        index: u32,
+    ) -> Result<(), ()> {
+        let (clif_sig, args, ret_ty) = trans_sig(self, &sig);
         self.obj_module
             .declare_function(name, Linkage::Export, &clif_sig)
             .map_err(|_| ())?;
         let func_info = FuncInfo {
             name,
-            sig,
+            args,
+            ret_ty,
+            index,
             clif_sig,
         };
         match self.funcs.insert(name, func_info) {
@@ -210,19 +254,45 @@ pub fn build_global_context(
     obj_module: ObjectModule,
     err_collector: Rc<ErrorCollector>,
 ) -> GlobalContext {
-    let mut global = GlobalContext::prototype(obj_module);
+    let mut global = GlobalContext::prototype(obj_module, err_collector);
+    let mut next_func_index = 0u32;
     for item in ast_parser.iter() {
         match item.inner() {
             AstNode::FnDef(fn_def) => {
+                let func_index = next_func_index;
+                next_func_index += 1;
                 global
-                    .declare_func(fn_def.name, fn_def.sign.clone())
+                    .declare_func(fn_def.name, fn_def.sign.clone(), func_index)
                     .map_err(|_| ErrorContent::FuncRedef.wrap(item.src_loc()))
-                    .collect_err(&err_collector);
+                    .collect_err(&global.err_collector);
             }
             _ => ErrorContent::ExprNotAllowedAtTopLevel
                 .wrap(item.src_loc())
-                .collect_into(&err_collector),
+                .collect_into(&global.err_collector),
         }
     }
     global
+}
+
+/// Translate a function signature information to cranelift signature.
+/// Returns the clif signature, the flattened argument variables, and the flattened return type.
+fn trans_sig(
+    global: &GlobalContext,
+    sig: &Signature,
+) -> (ClifSignature, Vec<VarInfo>, CollectiveType) {
+    let mut clif_sig = ClifSignature::new(CallConv::SystemV);
+    let mut args = Vec::<VarInfo>::with_capacity(sig.args.len());
+    clif_sig.params.reserve(sig.args.len());
+    let mut id_counter = 0usize;
+    for (_, ty) in sig.args.iter() {
+        let var_info = make_var_info(global, &mut id_counter, ty.clone());
+        var_info
+            .flat_ty()
+            .fields()
+            .map(AbiParam::new)
+            .for_each(|t| clif_sig.params.push(t));
+        args.push(var_info);
+    }
+    let ret_ty = super::trans_ty(global, &sig.ret_type);
+    (clif_sig, args, ret_ty)
 }

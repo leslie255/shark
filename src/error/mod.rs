@@ -55,6 +55,7 @@ pub enum ErrorContent {
     // -- Type checker error
     #[allow(dead_code)]
     InvalidMemberAccess,
+    FuncWithoutBody,
 }
 impl ErrorContent {
     #[must_use]
@@ -94,7 +95,8 @@ impl ErrorContent {
             Self::ExprNotAllowedAsFnBody => "expression not allowed as function body",
             Self::ExprNotAllowedAsChild => "expression is not allowed as child",
             Self::InvalidMemberAccess => "invalid member access",
-            Self::FuncRedef => "Redefinition of function",
+            Self::FuncRedef => "redefinition of function",
+            Self::FuncWithoutBody => "function without",
         }
     }
     fn description(&self) -> String {
@@ -143,6 +145,7 @@ impl ErrorContent {
             Self::ExprNotAllowedAsChild => "This expression is not allowed here".to_string(),
             Self::InvalidMemberAccess => "No such path exists".to_string(),
             Self::FuncRedef => "This function was previously declared".to_string(),
+            Self::FuncWithoutBody => "function without body is not allowed".to_string(),
         }
     }
 }

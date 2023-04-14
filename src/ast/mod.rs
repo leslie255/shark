@@ -89,7 +89,7 @@ pub enum AstNode {
 
     // -- Control flow
     Block(Vec<AstNodeRef>),
-    FnDef(FnDef),
+    FnDef(Function),
     If(IfExpr),
     Loop(Vec<AstNodeRef>),
     Return(Option<AstNodeRef>),
@@ -217,13 +217,13 @@ impl Debug for Signature {
 }
 
 #[derive(Clone)]
-pub struct FnDef {
+pub struct Function {
     pub name: &'static str,
     pub sign: Signature,
     pub body: Option<Vec<AstNodeRef>>,
 }
 
-impl Debug for FnDef {
+impl Debug for Function {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         fmt_fn_head(f, self)?;
         let body = match &self.body {
@@ -249,7 +249,7 @@ impl Debug for FnDef {
 
 /// Formats the head of a function definition.
 #[inline]
-fn fmt_fn_head(f: &mut std::fmt::Formatter<'_>, fn_def: &FnDef) -> std::fmt::Result {
+fn fmt_fn_head(f: &mut std::fmt::Formatter<'_>, fn_def: &Function) -> std::fmt::Result {
     write!(f, "{}", fn_def.name.escape_default())?;
     fn_def.sign.fmt(f)?;
     Ok(())

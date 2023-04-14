@@ -15,7 +15,7 @@ use crate::{
 use self::type_parser::parse_type_expr;
 
 use super::{
-    type_expr::TypeExpr, Ast, AstNode, AstNodeRef, EnumDef, FnDef, Signature, IfExpr, MathOpKind,
+    type_expr::TypeExpr, Ast, AstNode, AstNodeRef, EnumDef, Function, Signature, IfExpr, MathOpKind,
     StructOrUnionDef,
 };
 
@@ -859,7 +859,7 @@ impl AstParser {
             _ => todo!("error"),
         };
 
-        let node = AstNode::FnDef(FnDef {
+        let node = AstNode::FnDef(Function {
             name,
             sign: Signature { args, ret_type },
             body,
