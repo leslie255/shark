@@ -1,7 +1,7 @@
 use std::ops::Range;
 
 use crate::{
-    ast::{type_expr::TypeExpr, Ast, AstNode, AstNodeRef, Function},
+    ast::{type_expr::TypeExpr, Ast, AstNode, AstNodeRef, Function, MathOpKind},
     error::{location::SourceLocation, CollectIfErr, ErrorContent},
     token::NumValue,
 };
@@ -71,13 +71,12 @@ fn trans_ty(global: &GlobalContext, ty: &TypeExpr) -> FlatType {
         TypeExpr::Struct => todo!(),
         TypeExpr::Union => todo!(),
         TypeExpr::Enum => todo!(),
-        TypeExpr::_Unknown => panic!("Calling `trans_ty` on a non-concrete type {{unknown}}"),
-        TypeExpr::_SInt => panic!("Calling `trans_ty` on a non-concrete type {{signed integer}}"),
-        TypeExpr::_Int => panic!("Calling `trans_ty` on a non-concrete type {{integer}}"),
-        TypeExpr::_Float => {
-            panic!("Calling `trans_ty` on a non-concrete type {{floating point number}}")
-        }
-        TypeExpr::Never => FlatType::Empty,
+        TypeExpr::_Unknown => clif_types::INVALID.into(),
+        TypeExpr::_Numeric => clif_types::INVALID.into(),
+        TypeExpr::_SInt => clif_types::INVALID.into(),
+        TypeExpr::_Int => clif_types::INVALID.into(),
+        TypeExpr::_Float => clif_types::INVALID.into(),
+        TypeExpr::Never => clif_types::INVALID.into(),
     }
 }
 
@@ -93,12 +92,121 @@ fn use_var(builder: &mut FunctionBuilder<'_>, var_range: Range<usize>) -> Value 
     }
 }
 
+fn gen_imm(
+    builder: &mut FunctionBuilder<'_>,
+    global: &GlobalContext,
+    #[allow(unused_variables)] local: &mut LocalContext,
+    expect_ty: Option<&TypeExpr>,
+    num_val: NumValue,
+    loc: SourceLocation,
+) -> Option<(TypeExpr, Value)> {
+    let ty = match expect_ty {
+        Some(TypeExpr::_Numeric) if num_val.is_int() => clif_types::I64,
+        Some(TypeExpr::_Numeric) if num_val.is_f() => clif_types::F64,
+        Some(TypeExpr::_Int) | Some(TypeExpr::_SInt) => clif_types::I64,
+        Some(TypeExpr::_Unknown) => clif_types::I64,
+        Some(TypeExpr::USize) | Some(TypeExpr::ISize) => clif_types::I64,
+        Some(TypeExpr::U64) | Some(TypeExpr::I64) => clif_types::I64,
+        Some(TypeExpr::U32) | Some(TypeExpr::I32) => clif_types::I32,
+        Some(TypeExpr::U16) | Some(TypeExpr::I16) => clif_types::I16,
+        Some(TypeExpr::U8) | Some(TypeExpr::I8) => clif_types::I8,
+        Some(TypeExpr::F64) => clif_types::F64,
+        Some(TypeExpr::F32) => clif_types::F32,
+        Some(ty) => {
+            ErrorContent::MismatchdTypes(TypeExpr::_Numeric, ty.clone())
+                .wrap(loc)
+                .collect_into(&global.err_collector);
+            return None;
+        }
+        None => match num_val {
+            // TODO: range checking
+            NumValue::U(..) => clif_types::I64,
+            NumValue::I(..) => clif_types::I64,
+            NumValue::F(..) => clif_types::F64,
+        },
+    };
+    Some((
+        expect_ty.cloned().unwrap_or_else(|| match num_val {
+            NumValue::U(..) => TypeExpr::_Int,
+            NumValue::I(..) => TypeExpr::_SInt,
+            NumValue::F(..) => TypeExpr::_Float,
+        }),
+        match num_val {
+            // TODO: range checking and type checking
+            NumValue::U(..) => builder.ins().iconst(ty, 0),
+            NumValue::I(..) => builder.ins().iconst(ty, 0),
+            NumValue::F(..) => builder.ins().iconst(ty, 0),
+        }
+        .into(),
+    ))
+}
+
 #[must_use]
+fn gen_let(
+    builder: &mut FunctionBuilder<'_>,
+    global: &GlobalContext,
+    local: &mut LocalContext,
+    lhs: &'static str,
+    ty: Option<&TypeExpr>,
+    rhs: Option<AstNodeRef>,
+) -> Option<()> {
+    let rhs = rhs.expect("TODO: variable declaration without initial RHS");
+    let (rhs_ty, rhs_val) = gen_expr(builder, global, local, ty, rhs)?;
+    let (clif_vars, flat_ty) = local.create_var(global, lhs, rhs_ty);
+    for ((var, ty), val) in clif_vars
+        .into_iter()
+        .map(Variable::new)
+        .zip(flat_ty.fields())
+        .zip(rhs_val.clif_values())
+    {
+        builder.declare_var(var, ty);
+        builder.def_var(var, val);
+    }
+    Some(())
+}
+
+fn gen_neg(
+    builder: &mut FunctionBuilder<'_>,
+    global: &GlobalContext,
+    local: &mut LocalContext,
+    child: AstNodeRef,
+) -> Option<(TypeExpr, Value)> {
+    let (ty, val) = gen_expr(builder, global, local, Some(&TypeExpr::_Numeric), child)?;
+    if !ty.is_any_numeric() {
+        ErrorContent::MismatchdTypes(TypeExpr::_Numeric, ty)
+            .wrap(child.src_loc())
+            .collect_into(&global.err_collector);
+        return None;
+    }
+    let val = val.as_single().unwrap();
+    let val = builder.ins().ineg(val);
+    Some((ty, val.into()))
+}
+
+#[allow(unused_variables)]
+fn gen_math_op(
+    builder: &mut FunctionBuilder,
+    global: &GlobalContext,
+    local: &mut LocalContext,
+    expect_ty: Option<&TypeExpr>,
+    opkind: MathOpKind,
+    lhs: AstNodeRef,
+    rhs: AstNodeRef,
+) -> Option<(TypeExpr, Value)> {
+    match opkind {
+        MathOpKind::Add => todo!(),
+        MathOpKind::Sub => todo!(),
+        MathOpKind::Mul => todo!(),
+        MathOpKind::Div => todo!(),
+        MathOpKind::Mod => todo!(),
+    }
+}
+
 fn gen_expr(
     builder: &mut FunctionBuilder<'_>,
     global: &GlobalContext,
     local: &mut LocalContext,
-    #[allow(unused_variables)] expect_ty: Option<&TypeExpr>,
+    expect_ty: Option<&TypeExpr>,
     node: AstNodeRef,
 ) -> Option<(TypeExpr, Value)> {
     match node.inner() {
@@ -110,60 +218,25 @@ fn gen_expr(
             let clif_vars = var_info.clif_vars();
             Some((var_info.ty().clone(), use_var(builder, clif_vars)))
         }
-        AstNode::Number(num_val) => {
-            let ty = match expect_ty {
-                Some(TypeExpr::USize) | Some(TypeExpr::ISize) => clif_types::I64,
-                Some(TypeExpr::U64) | Some(TypeExpr::I64) => clif_types::I64,
-                Some(TypeExpr::U32) | Some(TypeExpr::I32) => clif_types::I32,
-                Some(TypeExpr::U16) | Some(TypeExpr::I16) => clif_types::I16,
-                Some(TypeExpr::U8) | Some(TypeExpr::I8) => clif_types::I8,
-                Some(TypeExpr::F64) => clif_types::F64,
-                Some(TypeExpr::F32) => clif_types::F32,
-                Some(ty) => {
-                    ErrorContent::MismatchdTypes(TypeExpr::_Int, ty.clone())
-                        .wrap(node.src_loc())
-                        .collect_into(&global.err_collector);
-                    return None;
-                }
-                None => match num_val {
-                    // TODO: range checking
-                    NumValue::U(..) => clif_types::I64,
-                    NumValue::I(..) => clif_types::I64,
-                    NumValue::F(..) => clif_types::F64,
-                },
-            };
-            Some((
-                expect_ty.cloned().unwrap_or_else(|| match num_val {
-                    NumValue::U(..) => TypeExpr::_Int,
-                    NumValue::I(..) => TypeExpr::_SInt,
-                    NumValue::F(..) => TypeExpr::_Float,
-                }),
-                match num_val {
-                    // TODO: range checking and type checking
-                    NumValue::U(..) => builder.ins().iconst(ty, 0),
-                    NumValue::I(..) => builder.ins().iconst(ty, 0),
-                    NumValue::F(..) => builder.ins().iconst(ty, 0),
-                }
-                .into(),
-            ))
+        &AstNode::Number(num_val) => {
+            gen_imm(builder, global, local, expect_ty, num_val, node.src_loc())
         }
-        AstNode::Let(var_name, Some(ty), Some(rhs)) => {
-            let (_rhs_ty, rhs_val) = gen_expr(builder, global, local, Some(ty), *rhs)?;
-            // TODO: check_ty
-            let (clif_vars, flat_ty) = local.create_var(global, var_name, ty.clone());
-            for ((var, ty), val) in clif_vars
-                .into_iter()
-                .map(Variable::new)
-                .zip(flat_ty.fields())
-                .zip(rhs_val.clif_values())
-            {
-                builder.declare_var(var, ty);
-                builder.def_var(var, val);
-            }
+        AstNode::Let(lhs, ty, rhs) => {
+            let ty = ty.as_ref();
+            let rhs = rhs.as_ref().copied();
+            gen_let(builder, global, local, lhs, ty, rhs)?;
             Some((TypeExpr::void(), Value::Empty))
         }
-        AstNode::Let(_, None, None) => todo!("type infer"),
-        AstNode::Let(_, None, _) => todo!("type infer"),
+        AstNode::UnaryAdd(..) => {
+            ErrorContent::UnaryAdd
+                .wrap(node.src_loc())
+                .collect_into(&global.err_collector);
+            return None;
+        }
+        &AstNode::UnarySub(child) => gen_neg(builder, global, local, child),
+        &AstNode::MathOp(opkind, lhs, rhs) => {
+            gen_math_op(builder, global, local, expect_ty, opkind, lhs, rhs)
+        }
         node => {
             println!("skipping: {node:?}");
             Some((TypeExpr::void(), Value::Empty))

@@ -38,6 +38,14 @@ impl Value {
             Self::Multi(x) => x.as_slice(),
         }
     }
+
+    pub(super) fn as_single(&self) -> Option<ClifValue> {
+        if let &Self::Single(v) = self {
+            Some(v[0])
+        } else {
+            None
+        }
+    }
 }
 
 #[derive(Debug, Clone)]

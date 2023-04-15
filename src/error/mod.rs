@@ -57,6 +57,7 @@ pub enum ErrorContent {
     FuncWithoutBody,
     UndefinedVar(&'static str),
     MismatchdTypes(TypeExpr, TypeExpr),
+    UnaryAdd,
 }
 impl ErrorContent {
     #[must_use]
@@ -99,6 +100,7 @@ impl ErrorContent {
             Self::FuncWithoutBody => "function without",
             Self::UndefinedVar(..) => "undefined variable",
             Self::MismatchdTypes(..) => "mismatched types",
+            Self::UnaryAdd => "unary addition is not allowed",
         }
     }
     fn description(&self) -> String {
@@ -149,6 +151,10 @@ impl ErrorContent {
             Self::FuncWithoutBody => "Function without body is not allowed".to_string(),
             Self::UndefinedVar(name) => format!("Variable `{}` isn't defined", name),
             Self::MismatchdTypes(l, r) => format!("Expected {:?}, found {:?}`", l, r),
+            Self::UnaryAdd => {
+                "Try removing the leading `+`, or if it you meant plus, try adding an LHS"
+                    .to_string()
+            }
         }
     }
 }

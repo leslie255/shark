@@ -27,6 +27,23 @@ impl NumValue {
             NumValue::F(x) => x.to_be_bytes(),
         })
     }
+
+    /// Returns `true` if the num value is [`F`].
+    ///
+    /// [`F`]: NumValue::F
+    #[must_use]
+    pub fn is_f(&self) -> bool {
+        matches!(self, Self::F(..))
+    }
+
+    /// Returns `true` if the num value is either [`I`] or [`U`].
+    ///
+    /// [`I`]: NumValue::I
+    /// [`U`]: NumValue::U
+    #[must_use]
+    pub fn is_int(&self) -> bool {
+        matches!(self, Self::I(..)|Self::U(..))
+    }
 }
 impl Debug for NumValue {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
