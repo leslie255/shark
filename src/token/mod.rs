@@ -18,6 +18,15 @@ impl NumValue {
             _ => None,
         }
     }
+
+    /// Returns a `i64` value from be bytes, ignoring arithmetics
+    pub fn to_be(self)->i64 {
+        i64::from_be_bytes(match self{
+            NumValue::U(x) => x.to_be_bytes(),
+            NumValue::I(x) => x.to_be_bytes(),
+            NumValue::F(x) => x.to_be_bytes(),
+        })
+    }
 }
 impl Debug for NumValue {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {

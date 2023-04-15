@@ -4,6 +4,7 @@ use std::cell::RefCell;
 
 use location::{IntoSourceLoc, SourceLocation};
 
+use crate::ast::type_expr::TypeExpr;
 use crate::{buffered_content::BufferedContent, token::Token};
 
 use crate::term_color;
@@ -52,11 +53,10 @@ pub enum ErrorContent {
     ExprNotAllowedAsChild,
     FuncRedef,
 
-    // -- Type checker error
-    #[allow(dead_code)]
-    InvalidMemberAccess,
+    // -- Codegen error
     FuncWithoutBody,
     UndefinedVar(&'static str),
+    MismatchdTypes(TypeExpr, TypeExpr),
 }
 impl ErrorContent {
     #[must_use]
@@ -95,10 +95,10 @@ impl ErrorContent {
             Self::ExprNotAllowedAtTopLevel => "expression not allowed at top level",
             Self::ExprNotAllowedAsFnBody => "expression not allowed as function body",
             Self::ExprNotAllowedAsChild => "expression is not allowed as child",
-            Self::InvalidMemberAccess => "invalid member access",
             Self::FuncRedef => "redefinition of function",
             Self::FuncWithoutBody => "function without",
             Self::UndefinedVar(..) => "undefined variable",
+            Self::MismatchdTypes(..) => "mismatched types",
         }
     }
     fn description(&self) -> String {
@@ -145,10 +145,10 @@ impl ErrorContent {
                 "This expression is allowed as a statement in function body".to_string()
             }
             Self::ExprNotAllowedAsChild => "This expression is not allowed here".to_string(),
-            Self::InvalidMemberAccess => "No such path exists".to_string(),
             Self::FuncRedef => "This function was previously declared".to_string(),
             Self::FuncWithoutBody => "Function without body is not allowed".to_string(),
-            Self::UndefinedVar(name) => format!("Undefined variable `{}`", name).to_string(),
+            Self::UndefinedVar(name) => format!("Variable `{}` isn't defined", name),
+            Self::MismatchdTypes(l, r) => format!("Expected {:?}, found {:?}`", l, r),
         }
     }
 }

@@ -1,14 +1,15 @@
 use std::{
+    cell::{Ref, RefCell, RefMut},
     collections::{hash_map::Entry, HashMap},
     fmt::Debug,
     ops::Range,
     rc::Rc,
 };
 
-use cranelift::prelude::{AbiParam, Block, Signature as ClifSignature, EntityRef};
+use cranelift::prelude::{AbiParam, Block, EntityRef, Signature as ClifSignature};
 use cranelift_codegen::{ir::FuncRef, isa::CallConv};
 use cranelift_frontend::Variable;
-use cranelift_module::{Linkage, Module};
+use cranelift_module::{FuncId, Linkage, Module};
 use cranelift_object::ObjectModule;
 
 use crate::{
@@ -16,18 +17,18 @@ use crate::{
     error::{CollectIfErr, ErrorCollector, ErrorContent},
 };
 
-use super::CollectiveType;
+use super::{trans_ty, FlatType};
 
 /// Information about a variable
 #[derive(Clone, Debug)]
 pub(super) struct VarInfo {
     ty: TypeExpr,
-    flat_ty: CollectiveType,
+    flat_ty: FlatType,
     clif_vars: Range<usize>,
 }
 
 impl VarInfo {
-    pub fn new(ty: TypeExpr, flat_ty: CollectiveType, clif_vars: Range<usize>) -> Self {
+    pub fn new(ty: TypeExpr, flat_ty: FlatType, clif_vars: Range<usize>) -> Self {
         Self {
             ty,
             flat_ty,
@@ -35,9 +36,9 @@ impl VarInfo {
         }
     }
 
-    pub fn offset(&self,offset: usize) -> Variable {
-        let id =self.clif_vars.start+offset;
-        assert!(id<self.clif_vars.end);
+    pub fn offset(&self, offset: usize) -> Variable {
+        let id = self.clif_vars.start + offset;
+        assert!(id < self.clif_vars.end);
         Variable::new(id)
     }
 
@@ -45,7 +46,7 @@ impl VarInfo {
         &self.ty
     }
 
-    pub fn flat_ty(&self) -> &CollectiveType {
+    pub fn flat_ty(&self) -> &FlatType {
         &self.flat_ty
     }
 
@@ -59,7 +60,7 @@ impl VarInfo {
 pub(super) struct FuncInfo {
     pub name: &'static str,
     pub args: Vec<VarInfo>,
-    pub ret_ty: CollectiveType,
+    pub ret_ty: FlatType,
     pub index: u32,
     pub clif_sig: ClifSignature,
 }
@@ -146,9 +147,21 @@ impl LocalContext {
     }
 
     /// Creates a new variable and add that to the symbols
-    pub fn create_var(&mut self, global: &GlobalContext, name: &'static str, ty: TypeExpr) {
+    pub fn create_var<'a>(
+        &'a mut self,
+        global: &GlobalContext,
+        name: &'static str,
+        ty: TypeExpr,
+    ) -> (Range<usize>, &'a FlatType) {
         let var_info = make_var_info(global, &mut self.id_counter, ty);
         self.var_stack_top_mut().insert(name, var_info);
+        let var_info = unsafe {
+            self.vars
+                .get_unchecked(self.vars.len() - 1)
+                .get(name)
+                .unwrap_unchecked()
+        };
+        (var_info.clif_vars(), var_info.flat_ty())
     }
 
     /// Returns the variable of `name`, or exits with an error message if a variable of the
@@ -194,7 +207,7 @@ fn make_var_info(global: &GlobalContext, id_counter: &mut usize, ty: TypeExpr) -
 pub struct GlobalContext {
     /// Map from function name to Id and signature of the function
     funcs: HashMap<&'static str, FuncInfo>,
-    pub obj_module: ObjectModule,
+    pub obj_module: RefCell<ObjectModule>,
     pub err_collector: Rc<ErrorCollector>,
 }
 
@@ -212,13 +225,13 @@ impl GlobalContext {
     pub(self) fn prototype(obj_module: ObjectModule, err_collector: Rc<ErrorCollector>) -> Self {
         Self {
             funcs: HashMap::new(),
-            obj_module,
+            obj_module: RefCell::new(obj_module),
             err_collector,
         }
     }
 
     pub fn compile(self) -> Vec<u8> {
-        self.obj_module.finish().emit().unwrap()
+        self.obj_module.into_inner().finish().emit().unwrap()
     }
 
     /// Get the `FuncInfo` of a function by its name
@@ -234,9 +247,10 @@ impl GlobalContext {
         name: &'static str,
         sig: Signature,
         index: u32,
-    ) -> Result<(), ()> {
+    ) -> Result<FuncId, ()> {
         let (clif_sig, args, ret_ty) = trans_sig(self, &sig);
-        self.obj_module
+        let func_id = self
+            .obj_module_mut()
             .declare_function(name, Linkage::Export, &clif_sig)
             .map_err(|_| ())?;
         let func_info = FuncInfo {
@@ -248,8 +262,16 @@ impl GlobalContext {
         };
         match self.funcs.insert(name, func_info) {
             Some(..) => Err(()),
-            None => Ok(()),
+            None => Ok(func_id),
         }
+    }
+
+    pub fn obj_module(&self) -> Ref<ObjectModule> {
+        self.obj_module.borrow()
+    }
+
+    pub fn obj_module_mut(&self) -> RefMut<ObjectModule> {
+        self.obj_module.borrow_mut()
     }
 }
 
@@ -280,10 +302,7 @@ pub fn build_global_context(
 
 /// Translate a function signature information to cranelift signature.
 /// Returns the clif signature, the flattened argument variables, and the flattened return type.
-fn trans_sig(
-    global: &GlobalContext,
-    sig: &Signature,
-) -> (ClifSignature, Vec<VarInfo>, CollectiveType) {
+fn trans_sig(global: &GlobalContext, sig: &Signature) -> (ClifSignature, Vec<VarInfo>, FlatType) {
     let mut clif_sig = ClifSignature::new(CallConv::SystemV);
     let mut args = Vec::<VarInfo>::with_capacity(sig.args.len());
     clif_sig.params.reserve(sig.args.len());
@@ -296,6 +315,9 @@ fn trans_sig(
             .map(AbiParam::new)
             .for_each(|t| clif_sig.params.push(t));
         args.push(var_info);
+    }
+    for ty in trans_ty(global, &sig.ret_type).fields() {
+        clif_sig.returns.push(AbiParam::new(ty));
     }
     let ret_ty = super::trans_ty(global, &sig.ret_type);
     (clif_sig, args, ret_ty)

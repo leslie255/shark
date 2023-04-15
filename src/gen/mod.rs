@@ -1,24 +1,34 @@
-use std::slice::Iter;
+use std::ops::Range;
 
 use crate::{
     ast::{type_expr::TypeExpr, Ast, AstNode, AstNodeRef, Function},
     error::{location::SourceLocation, CollectIfErr, ErrorContent},
+    token::NumValue,
 };
-use cranelift::prelude::{types as clif_types, EntityRef, Type as ClifType};
+use cranelift::prelude::InstBuilder;
 use cranelift_codegen::{
     ir::{Function as ClifFunction, UserFuncName},
-    settings,
+    settings, verify_function, Context,
 };
 
 mod context;
 mod typecheck;
+mod value;
 
 use cranelift_frontend::{FunctionBuilder, FunctionBuilderContext, Variable};
+use cranelift_module::{Linkage, Module};
 use cranelift_object::{ObjectBuilder, ObjectModule};
 
 pub use context::{build_global_context, GlobalContext};
 
-use self::context::LocalContext;
+pub use cranelift::prelude::{
+    types as clif_types, EntityRef, Type as ClifType, Value as ClifValue,
+};
+
+use self::{
+    context::LocalContext,
+    value::{FlatType, Value},
+};
 
 pub fn make_empty_obj_module(name: &str) -> ObjectModule {
     let isa = cranelift_native::builder()
@@ -30,79 +40,7 @@ pub fn make_empty_obj_module(name: &str) -> ObjectModule {
     ObjectModule::new(obj_builder)
 }
 
-#[derive(Clone)]
-pub(self) enum CollectiveType {
-    Empty,
-    Single([ClifType; 1]),
-    Multi(Vec<ClifType>),
-}
-
-impl std::fmt::Debug for CollectiveType {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        self.as_slice().fmt(f)
-    }
-}
-
-impl CollectiveType {
-    pub fn as_slice(&self) -> &[ClifType] {
-        match self {
-            CollectiveType::Empty => &[],
-            CollectiveType::Single(arr) => arr.as_slice(),
-            CollectiveType::Multi(vec) => vec.as_slice(),
-        }
-    }
-
-    pub fn fields(&self) -> Fields {
-        match self {
-            CollectiveType::Empty => Fields::Empty,
-            &CollectiveType::Single([ty]) => Fields::Single(ty),
-            CollectiveType::Multi(x) => Fields::Multi(x.iter()),
-        }
-    }
-
-    pub fn len(&self) -> usize {
-        match self {
-            CollectiveType::Empty => 0,
-            CollectiveType::Single(..) => 1,
-            CollectiveType::Multi(vec) => vec.len(),
-        }
-    }
-}
-
-#[derive(Debug, Clone)]
-pub(self) enum Fields<'short> {
-    Empty,
-    Single(ClifType),
-    Multi(Iter<'short, ClifType>),
-}
-impl Iterator for Fields<'_> {
-    type Item = ClifType;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        match self {
-            &mut Fields::Empty => None,
-            &mut Fields::Single(x) => {
-                *self = Fields::Empty;
-                Some(x)
-            }
-            Fields::Multi(iter) => iter.next().copied(),
-        }
-    }
-}
-
-impl From<ClifType> for CollectiveType {
-    fn from(value: ClifType) -> Self {
-        Self::Single([value])
-    }
-}
-
-impl From<Vec<ClifType>> for CollectiveType {
-    fn from(value: Vec<ClifType>) -> Self {
-        Self::Multi(value)
-    }
-}
-
-fn trans_ty(global: &GlobalContext, ty: &TypeExpr) -> CollectiveType {
+fn trans_ty(global: &GlobalContext, ty: &TypeExpr) -> FlatType {
     match ty {
         TypeExpr::U128 | TypeExpr::I128 => clif_types::I128.into(),
         TypeExpr::USize | TypeExpr::ISize | TypeExpr::U64 | TypeExpr::I64 => clif_types::I64.into(),
@@ -117,7 +55,7 @@ fn trans_ty(global: &GlobalContext, ty: &TypeExpr) -> CollectiveType {
         TypeExpr::Slice(..) => vec![clif_types::R64, clif_types::I64].into(),
         TypeExpr::Array(_, _) => todo!(),
         TypeExpr::Tuple(fields) => match fields.as_slice() {
-            [] => CollectiveType::Empty,
+            [] => FlatType::Empty,
             [ty] => trans_ty(global, ty),
             fields => {
                 let mut children = Vec::<ClifType>::with_capacity(fields.len());
@@ -133,52 +71,152 @@ fn trans_ty(global: &GlobalContext, ty: &TypeExpr) -> CollectiveType {
         TypeExpr::Struct => todo!(),
         TypeExpr::Union => todo!(),
         TypeExpr::Enum => todo!(),
+        TypeExpr::_Unknown => panic!("Calling `trans_ty` on a non-concrete type {{unknown}}"),
+        TypeExpr::_SInt => panic!("Calling `trans_ty` on a non-concrete type {{signed integer}}"),
+        TypeExpr::_Int => panic!("Calling `trans_ty` on a non-concrete type {{integer}}"),
+        TypeExpr::_Float => {
+            panic!("Calling `trans_ty` on a non-concrete type {{floating point number}}")
+        }
+        TypeExpr::Never => FlatType::Empty,
     }
 }
 
+fn use_var(builder: &mut FunctionBuilder<'_>, var_range: Range<usize>) -> Value {
+    match var_range.len() {
+        0 => Value::Empty,
+        1 => builder.use_var(Variable::new(var_range.start)).into(),
+        _ => var_range
+            .map(Variable::new)
+            .map(|var| builder.use_var(var))
+            .collect::<Vec<ClifValue>>()
+            .into(),
+    }
+}
+
+#[must_use]
 fn gen_expr(
     builder: &mut FunctionBuilder<'_>,
     global: &GlobalContext,
     local: &mut LocalContext,
-    node: &AstNodeRef,
-) -> Option<()> {
+    #[allow(unused_variables)] expect_ty: Option<&TypeExpr>,
+    node: AstNodeRef,
+) -> Option<(TypeExpr, Value)> {
     match node.inner() {
         &AstNode::Identifier(name) => {
-            // a quick test
-            let var = local
+            let var_info = local
                 .var(name)
                 .ok_or(ErrorContent::UndefinedVar(name).wrap(node.src_loc()))
-                .collect_err(&global.err_collector)?
-                .offset(0);
-            let val = builder.use_var(var);
-            println!("variable `{name}` => {val}")
+                .collect_err(&global.err_collector)?;
+            let clif_vars = var_info.clif_vars();
+            Some((var_info.ty().clone(), use_var(builder, clif_vars)))
         }
-        node => println!("skipping: {node:?}"),
+        AstNode::Number(num_val) => {
+            let ty = match expect_ty {
+                Some(TypeExpr::USize) | Some(TypeExpr::ISize) => clif_types::I64,
+                Some(TypeExpr::U64) | Some(TypeExpr::I64) => clif_types::I64,
+                Some(TypeExpr::U32) | Some(TypeExpr::I32) => clif_types::I32,
+                Some(TypeExpr::U16) | Some(TypeExpr::I16) => clif_types::I16,
+                Some(TypeExpr::U8) | Some(TypeExpr::I8) => clif_types::I8,
+                Some(TypeExpr::F64) => clif_types::F64,
+                Some(TypeExpr::F32) => clif_types::F32,
+                Some(ty) => {
+                    ErrorContent::MismatchdTypes(TypeExpr::_Int, ty.clone())
+                        .wrap(node.src_loc())
+                        .collect_into(&global.err_collector);
+                    return None;
+                }
+                None => match num_val {
+                    // TODO: range checking
+                    NumValue::U(..) => clif_types::I64,
+                    NumValue::I(..) => clif_types::I64,
+                    NumValue::F(..) => clif_types::F64,
+                },
+            };
+            Some((
+                expect_ty.cloned().unwrap_or_else(|| match num_val {
+                    NumValue::U(..) => TypeExpr::_Int,
+                    NumValue::I(..) => TypeExpr::_SInt,
+                    NumValue::F(..) => TypeExpr::_Float,
+                }),
+                match num_val {
+                    // TODO: range checking and type checking
+                    NumValue::U(..) => builder.ins().iconst(ty, 0),
+                    NumValue::I(..) => builder.ins().iconst(ty, 0),
+                    NumValue::F(..) => builder.ins().iconst(ty, 0),
+                }
+                .into(),
+            ))
+        }
+        AstNode::Let(var_name, Some(ty), Some(rhs)) => {
+            let (_rhs_ty, rhs_val) = gen_expr(builder, global, local, Some(ty), *rhs)?;
+            // TODO: check_ty
+            let (clif_vars, flat_ty) = local.create_var(global, var_name, ty.clone());
+            for ((var, ty), val) in clif_vars
+                .into_iter()
+                .map(Variable::new)
+                .zip(flat_ty.fields())
+                .zip(rhs_val.clif_values())
+            {
+                builder.declare_var(var, ty);
+                builder.def_var(var, val);
+            }
+            Some((TypeExpr::void(), Value::Empty))
+        }
+        AstNode::Let(_, None, None) => todo!("type infer"),
+        AstNode::Let(_, None, _) => todo!("type infer"),
+        node => {
+            println!("skipping: {node:?}");
+            Some((TypeExpr::void(), Value::Empty))
+        }
     }
-    Some(())
 }
 
+#[must_use]
 fn gen_block(
     builder: &mut FunctionBuilder<'_>,
     global: &GlobalContext,
     local: &mut LocalContext,
     body: &[AstNodeRef],
-) -> Option<()> {
-    for node in body {
-        gen_expr(builder, global, local, node);
+    expect_ty: Option<&TypeExpr>,
+) -> Option<(TypeExpr, Value)> {
+    match body {
+        [] => Some((TypeExpr::void(), Value::Empty)),
+        [node] => match node.inner() {
+            &AstNode::Tail(node) => gen_expr(builder, global, local, expect_ty, node),
+            _ => {
+                gen_expr(builder, global, local, None, *node)?;
+                Some((TypeExpr::void(), Value::Empty))
+            }
+        },
+        [.., last] => {
+            let body = unsafe { body.get_unchecked(0..body.len() - 1) };
+            for &node in body {
+                gen_expr(builder, global, local, None, node)?;
+            }
+            match last.inner() {
+                &AstNode::Tail(node) => gen_expr(builder, global, local, expect_ty, node),
+                _ => {
+                    gen_expr(builder, global, local, None, *last)?;
+                    Some((TypeExpr::void(), Value::Empty))
+                }
+            }
+        }
     }
-    Some(())
 }
 
-fn gen_function(global: &mut GlobalContext, func: &Function, loc: SourceLocation) -> Option<()> {
+fn gen_function(
+    global: &mut GlobalContext,
+    ast_func: &Function,
+    loc: SourceLocation,
+) -> Option<()> {
     // make sure the function has a body first
-    let body = func
+    let body = ast_func
         .body
         .as_ref()
         .ok_or(ErrorContent::FuncWithoutBody.wrap(loc))
         .collect_err(&global.err_collector)?;
 
-    let func_info = global.func(func.name).unwrap();
+    let func_info = global.func(ast_func.name).unwrap();
     let args = func_info.args.clone();
     let mut clif_func = ClifFunction::with_name_signature(
         UserFuncName::user(0, func_info.index),
@@ -207,7 +245,8 @@ fn gen_function(global: &mut GlobalContext, func: &Function, loc: SourceLocation
     }
     let mut local = LocalContext::new(
         ret_block,
-        func.sign
+        ast_func
+            .sign
             .args
             .iter()
             .map(|(name, _)| *name)
@@ -215,7 +254,35 @@ fn gen_function(global: &mut GlobalContext, func: &Function, loc: SourceLocation
     );
     local.id_counter = builder.block_params(entry_block).len();
 
-    gen_block(&mut builder, global, &mut local, &body);
+    let (block_ty, block_val) = gen_block(
+        &mut builder,
+        global,
+        &mut local,
+        &body,
+        Some(&ast_func.sign.ret_type),
+    )?;
+
+    if !block_ty.is_never() {
+        let ret_vals: Vec<ClifValue> = trans_ty(global, &ast_func.sign.ret_type)
+            .fields()
+            .map(|ty| builder.append_block_param(ret_block, ty))
+            .collect();
+        builder.ins().jump(ret_block, block_val.as_slice());
+        builder.switch_to_block(ret_block);
+        builder.seal_block(ret_block);
+        builder.ins().return_(ret_vals.as_slice());
+    }
+
+    println!("{}", clif_func.display());
+
+    verify_function(&clif_func, global.obj_module().isa()).unwrap();
+
+    let obj_module = &mut *global.obj_module_mut();
+    let func_id = obj_module
+        .declare_function(ast_func.name, Linkage::Export, &func_info.clif_sig)
+        .unwrap();
+    let mut ctx = Context::for_function(clif_func);
+    obj_module.define_function(func_id, &mut ctx).unwrap();
 
     Some(())
 }

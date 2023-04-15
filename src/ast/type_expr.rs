@@ -37,7 +37,16 @@ pub enum TypeExpr {
     Union,
     #[allow(dead_code)]
     Enum,
+
+    // Non-concrete types
+    _Unknown,
+    _SInt,
+    _Int,
+    _Float,
+
+    Never,
 }
+
 impl TypeExpr {
     /// A shorthand for creating the `()` empty tuple type
     #[inline]
@@ -50,7 +59,16 @@ impl TypeExpr {
     pub fn is_void_tuple(&self) -> bool {
         matches!(self, Self::Tuple(children) if children.is_empty())
     }
+
+    /// Returns `true` if the type expr is [`Never`].
+    ///
+    /// [`Never`]: TypeExpr::Never
+    #[must_use]
+    pub fn is_never(&self) -> bool {
+        matches!(self, Self::Never)
+    }
 }
+
 impl Debug for TypeExpr {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         match self {
@@ -136,6 +154,11 @@ impl Debug for TypeExpr {
             Self::Struct => write!(f, "{{STRUCT}}")?,
             Self::Union => write!(f, "{{UNION}}")?,
             Self::Enum => write!(f, "{{ENUM}}")?,
+            Self::_Unknown => write!(f, "{{unknown}}")?,
+            Self::_SInt => write!(f, "{{signed integer}}")?,
+            Self::_Int => write!(f, "{{integer}}")?,
+            Self::_Float => write!(f, "{{float point number}}")?,
+            Self::Never => write!(f, "!never")?,
         }
         Ok(())
     }

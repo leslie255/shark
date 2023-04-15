@@ -29,7 +29,7 @@ fn main() {
         Rc::clone(&err_collector),
     );
     dbg!(&global_context);
-    
+
     gen::compile(&mut global_context, &ast_parser.ast);
 
     err_collector.print_and_dump_all(&buffers);
