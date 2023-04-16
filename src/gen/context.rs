@@ -247,11 +247,12 @@ impl GlobalContext {
         name: &'static str,
         sig: Signature,
         index: u32,
+        linkage: Linkage,
     ) -> Result<FuncId, ()> {
         let (clif_sig, args, ret_ty) = trans_sig(self, &sig);
         let func_id = self
             .obj_module_mut()
-            .declare_function(name, Linkage::Export, &clif_sig)
+            .declare_function(name, linkage, &clif_sig)
             .map_err(|_| ())?;
         let func_info = FuncInfo {
             name,
@@ -284,11 +285,15 @@ pub fn build_global_context(
     let mut next_func_index = 0u32;
     for item in ast_parser.iter() {
         match item.inner() {
-            AstNode::FnDef(fn_def) => {
+            AstNode::FnDef(function) => {
                 let func_index = next_func_index;
                 next_func_index += 1;
+                let linkage = match function.body {
+                    Some(..) => Linkage::Export,
+                    None => Linkage::Import,
+                };
                 global
-                    .declare_func(fn_def.name, fn_def.sign.clone(), func_index)
+                    .declare_func(function.name, function.sign.clone(), func_index, linkage)
                     .map_err(|_| ErrorContent::FuncRedef.wrap(item.src_loc()))
                     .collect_err(&global.err_collector);
             }

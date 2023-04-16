@@ -51,6 +51,7 @@ fn parse_type_expr_node(
         Token::Identifier("char") => TypeExpr::Char,
         Token::Identifier("bool") => TypeExpr::Bool,
         Token::Identifier(typename) => TypeExpr::TypeName(typename),
+        Token::Exc => TypeExpr::Never,
         Token::AndOp => {
             let child = parse_type_expr_node(parser, current_loc, recursive_counter + 1)?;
             TypeExpr::Ref(Box::new(child))

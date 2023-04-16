@@ -1,3 +1,6 @@
-fn f(x: i64) -> i64 {
-    x
+fn exit(_: i32) -> !;
+
+fn main() -> i32 {
+    let x: i64 = 255 + 1;
+    0
 }

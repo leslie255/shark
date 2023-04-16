@@ -1,6 +1,8 @@
 use std::fmt::{Debug, Display, Formatter};
 
-#[derive(Clone)]
+/// `TypeExpr` implements `Eq`, but in the type checker it should always be compared by
+/// `gen::type_matches` to comparing with co-variance
+#[derive(Clone, PartialEq, Eq)]
 pub enum TypeExpr {
     USize,
     ISize,
@@ -90,6 +92,48 @@ impl TypeExpr {
             | TypeExpr::_Int
             | TypeExpr::_Float => true,
             _ => false,
+        }
+    }
+
+    pub fn is_u(&self) -> bool {
+        match self {
+            TypeExpr::USize
+            | TypeExpr::U128
+            | TypeExpr::U64
+            | TypeExpr::U32
+            | TypeExpr::U16
+            | TypeExpr::U8 => true,
+            _ => false,
+        }
+    }
+
+    pub fn is_i(&self) -> bool {
+        match self {
+            TypeExpr::ISize
+            | TypeExpr::I128
+            | TypeExpr::I64
+            | TypeExpr::I32
+            | TypeExpr::I16
+            | TypeExpr::I8 => true,
+            _ => false,
+        }
+    }
+
+    pub fn is_f(&self) -> bool {
+        match self {
+            TypeExpr::F64 | TypeExpr::F32 => true,
+            _ => false,
+        }
+    }
+
+    pub fn is_concrete(&self) -> bool {
+        match self {
+            TypeExpr::_Unknown
+            | TypeExpr::_Numeric
+            | TypeExpr::_SInt
+            | TypeExpr::_Int
+            | TypeExpr::_Float => false,
+            _ => true,
         }
     }
 }

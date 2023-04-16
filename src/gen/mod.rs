@@ -27,6 +27,7 @@ pub use cranelift::prelude::{
 
 use self::{
     context::LocalContext,
+    typecheck::type_matches,
     value::{FlatType, Value},
 };
 
@@ -133,9 +134,13 @@ fn gen_imm(
         }),
         match num_val {
             // TODO: range checking and type checking
-            NumValue::U(..) => builder.ins().iconst(ty, 0),
-            NumValue::I(..) => builder.ins().iconst(ty, 0),
-            NumValue::F(..) => builder.ins().iconst(ty, 0),
+            NumValue::U(..) => builder.ins().iconst(ty, num_val.to_be()),
+            NumValue::I(..) => builder.ins().iconst(ty, num_val.to_be()),
+            NumValue::F(f) => match ty {
+                clif_types::F64 => builder.ins().f64const(f),
+                clif_types::F32 => builder.ins().f32const(f as f32),
+                _ => unreachable!(),
+            },
         }
         .into(),
     ))
@@ -152,7 +157,28 @@ fn gen_let(
 ) -> Option<()> {
     let rhs = rhs.expect("TODO: variable declaration without initial RHS");
     let (rhs_ty, rhs_val) = gen_expr(builder, global, local, ty, rhs)?;
-    let (clif_vars, flat_ty) = local.create_var(global, lhs, rhs_ty);
+    let ty = match ty {
+        Some(lhs_ty) => {
+            if !type_matches(global, lhs_ty, &rhs_ty) {
+                ErrorContent::MismatchdTypes(lhs_ty.clone(), rhs_ty.clone())
+                    .wrap(rhs.src_loc())
+                    .collect_into(&global.err_collector);
+                return None;
+            }
+            lhs_ty.clone()
+        }
+        None => {
+            if rhs_ty.is_concrete() {
+                rhs_ty
+            } else {
+                ErrorContent::NoneConreteTypeAsRhs
+                    .wrap(rhs.src_loc())
+                    .collect_into(&global.err_collector);
+                return None;
+            }
+        }
+    };
+    let (clif_vars, flat_ty) = local.create_var(global, lhs, ty);
     for ((var, ty), val) in clif_vars
         .into_iter()
         .map(Variable::new)
@@ -183,23 +209,61 @@ fn gen_neg(
     Some((ty, val.into()))
 }
 
-#[allow(unused_variables)]
 fn gen_math_op(
     builder: &mut FunctionBuilder,
     global: &GlobalContext,
     local: &mut LocalContext,
     expect_ty: Option<&TypeExpr>,
     opkind: MathOpKind,
-    lhs: AstNodeRef,
-    rhs: AstNodeRef,
+    lhs_node: AstNodeRef,
+    rhs_node: AstNodeRef,
 ) -> Option<(TypeExpr, Value)> {
-    match opkind {
-        MathOpKind::Add => todo!(),
-        MathOpKind::Sub => todo!(),
-        MathOpKind::Mul => todo!(),
-        MathOpKind::Div => todo!(),
-        MathOpKind::Mod => todo!(),
+    let (lhs_ty, lhs_val) = gen_expr(builder, global, local, expect_ty, lhs_node)?;
+    let (rhs_ty, rhs_val) = gen_expr(builder, global, local, expect_ty, rhs_node)?;
+    if !type_matches(global, &lhs_ty, &rhs_ty) {
+        ErrorContent::MismatchdTypes(lhs_ty, rhs_ty)
+            .wrap(lhs_node.src_loc().join(rhs_node.src_loc()))
+            .collect_into(&global.err_collector);
+        return None;
     }
+    let lhs = lhs_val.as_single().unwrap();
+    let rhs = rhs_val.as_single().unwrap();
+    let val = if lhs_ty.is_i() {
+        match opkind {
+            MathOpKind::Add => builder.ins().iadd(lhs, rhs),
+            MathOpKind::Sub => builder.ins().isub(lhs, rhs),
+            MathOpKind::Mul => builder.ins().imul(lhs, rhs),
+            MathOpKind::Div => builder.ins().sdiv(lhs, rhs),
+            MathOpKind::Mod => builder.ins().srem(lhs, rhs),
+        }
+    } else if lhs_ty.is_u() {
+        match opkind {
+            MathOpKind::Add => builder.ins().iadd(lhs, rhs),
+            MathOpKind::Sub => builder.ins().isub(lhs, rhs),
+            MathOpKind::Mul => builder.ins().imul(lhs, rhs),
+            MathOpKind::Div => builder.ins().udiv(lhs, rhs),
+            MathOpKind::Mod => builder.ins().urem(lhs, rhs),
+        }
+    } else if lhs_ty.is_f() {
+        match opkind {
+            MathOpKind::Add => builder.ins().fadd(lhs, rhs),
+            MathOpKind::Sub => builder.ins().fsub(lhs, rhs),
+            MathOpKind::Mul => builder.ins().fmul(lhs, rhs),
+            MathOpKind::Div => builder.ins().fdiv(lhs, rhs),
+            MathOpKind::Mod => {
+                ErrorContent::MismatchdTypes(TypeExpr::_Int, lhs_ty)
+                    .wrap(lhs_node.src_loc().join(rhs_node.src_loc()))
+                    .collect_into(&global.err_collector);
+                return None;
+            }
+        }
+    } else {
+        ErrorContent::MismatchdTypes(TypeExpr::_Numeric, lhs_ty)
+            .wrap(lhs_node.src_loc().join(rhs_node.src_loc()))
+            .collect_into(&global.err_collector);
+        return None;
+    };
+    Some((lhs_ty, val.into()))
 }
 
 fn gen_expr(
@@ -234,9 +298,7 @@ fn gen_expr(
             return None;
         }
         &AstNode::UnarySub(child) => gen_neg(builder, global, local, child),
-        &AstNode::MathOp(opkind, lhs, rhs) => {
-            gen_math_op(builder, global, local, expect_ty, opkind, lhs, rhs)
-        }
+        &AstNode::MathOp(op, l, r) => gen_math_op(builder, global, local, expect_ty, op, l, r),
         node => {
             println!("skipping: {node:?}");
             Some((TypeExpr::void(), Value::Empty))
@@ -264,7 +326,7 @@ fn gen_block(
         [.., last] => {
             let body = unsafe { body.get_unchecked(0..body.len() - 1) };
             for &node in body {
-                gen_expr(builder, global, local, None, node)?;
+                gen_expr(builder, global, local, None, node);
             }
             match last.inner() {
                 &AstNode::Tail(node) => gen_expr(builder, global, local, expect_ty, node),
@@ -280,14 +342,10 @@ fn gen_block(
 fn gen_function(
     global: &mut GlobalContext,
     ast_func: &Function,
-    loc: SourceLocation,
+    #[allow(unused_variables)] loc: SourceLocation,
 ) -> Option<()> {
-    // make sure the function has a body first
-    let body = ast_func
-        .body
-        .as_ref()
-        .ok_or(ErrorContent::FuncWithoutBody.wrap(loc))
-        .collect_err(&global.err_collector)?;
+    // functions without bodies has already been declared by `build_global_context`
+    let body = ast_func.body.as_ref()?;
 
     let func_info = global.func(ast_func.name).unwrap();
     let args = func_info.args.clone();

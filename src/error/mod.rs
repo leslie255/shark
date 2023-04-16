@@ -58,6 +58,7 @@ pub enum ErrorContent {
     UndefinedVar(&'static str),
     MismatchdTypes(TypeExpr, TypeExpr),
     UnaryAdd,
+    NoneConreteTypeAsRhs,
 }
 impl ErrorContent {
     #[must_use]
@@ -101,6 +102,7 @@ impl ErrorContent {
             Self::UndefinedVar(..) => "undefined variable",
             Self::MismatchdTypes(..) => "mismatched types",
             Self::UnaryAdd => "unary addition is not allowed",
+            Self::NoneConreteTypeAsRhs => "non-concrete type as rhs of `let`",
         }
     }
     fn description(&self) -> String {
@@ -155,6 +157,7 @@ impl ErrorContent {
                 "Try removing the leading `+`, or if it you meant plus, try adding an LHS"
                     .to_string()
             }
+            Self::NoneConreteTypeAsRhs => "Try explicitly specify a type".to_string(),
         }
     }
 }
