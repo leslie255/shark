@@ -1,13 +1,13 @@
 use std::ops::Range;
 
 use crate::{
-    ast::{type_expr::TypeExpr, Ast, AstNode, AstNodeRef, Function, MathOpKind},
+    ast::{type_expr::TypeExpr, Ast, AstNode, AstNodeRef, Function, MathOpKind, Signature},
     error::{location::SourceLocation, CollectIfErr, ErrorContent},
     token::NumValue,
 };
-use cranelift::prelude::InstBuilder;
+use cranelift::prelude::{ExtFuncData, ExternalName, InstBuilder, TrapCode};
 use cranelift_codegen::{
-    ir::{Function as ClifFunction, UserFuncName},
+    ir::{FuncRef, Function as ClifFunction, UserExternalName, UserFuncName},
     settings, verify_function, Context,
 };
 
@@ -22,7 +22,8 @@ use cranelift_object::{ObjectBuilder, ObjectModule};
 pub use context::{build_global_context, GlobalContext};
 
 pub use cranelift::prelude::{
-    types as clif_types, EntityRef, Type as ClifType, Value as ClifValue,
+    types as clif_types, EntityRef, Signature as ClifSignature, Type as ClifType,
+    Value as ClifValue,
 };
 
 use self::{
@@ -77,7 +78,7 @@ fn trans_ty(global: &GlobalContext, ty: &TypeExpr) -> FlatType {
         TypeExpr::_SInt => clif_types::INVALID.into(),
         TypeExpr::_Int => clif_types::INVALID.into(),
         TypeExpr::_Float => clif_types::INVALID.into(),
-        TypeExpr::Never => clif_types::INVALID.into(),
+        TypeExpr::Never => FlatType::Empty,
     }
 }
 
@@ -291,6 +292,7 @@ fn gen_expr(
             gen_let(builder, global, local, lhs, ty, rhs)?;
             Some((TypeExpr::void(), Value::Empty))
         }
+        AstNode::Call(callee, args) => gen_call(builder, global, local, *callee, &args),
         AstNode::UnaryAdd(..) => {
             ErrorContent::UnaryAdd
                 .wrap(node.src_loc())
@@ -306,6 +308,96 @@ fn gen_expr(
     }
 }
 
+/// Imports an user-defined external function to a function, returns the signature of the imported
+/// function and the result `FuncRef`, if the function is already imported, returns the result
+/// stored in `local`
+fn import_func_if_needed<'g>(
+    builder: &mut FunctionBuilder<'_>,
+    global: &'g GlobalContext,
+    local: &mut LocalContext,
+    name: &'static str,
+) -> Result<(&'g Signature, FuncRef), ErrorContent> {
+    let func_info = global.func(name).ok_or(ErrorContent::FuncNotExist(name))?;
+    let func_ref = local.import_func_if_needed(name, || {
+        let sig_ref = builder.import_signature((&func_info.clif_sig).clone());
+        let name_ref = builder
+            .func
+            .declare_imported_user_function(UserExternalName::new(0, func_info.index));
+        let func_ref = builder.import_function(ExtFuncData {
+            name: ExternalName::user(name_ref),
+            signature: sig_ref,
+            colocated: false,
+        });
+        func_ref
+    });
+    Ok((&func_info.sig, func_ref))
+}
+
+#[must_use]
+fn gen_call(
+    builder: &mut FunctionBuilder<'_>,
+    global: &GlobalContext,
+    local: &mut LocalContext,
+    callee: AstNodeRef,
+    args: &[AstNodeRef],
+) -> Option<(TypeExpr, Value)> {
+    let func_name = callee
+        .as_identifier()
+        .expect("Indirect function calling is not supported yet");
+    let (sig, func_ref) = import_func_if_needed(builder, global, local, func_name)
+        .map_err(|e| e.wrap(callee.src_loc()))
+        .collect_err(&global.err_collector)?;
+    let args = if args.len() != sig.args.len() {
+        ErrorContent::MismatchedArgsCount(Some(func_name), sig.args.len(), args.len())
+            .wrap(callee.src_loc())
+            .collect_into(&global.err_collector);
+        // still checks if at least all the provided arguments are valid (e.g. if giving a variable
+        // that does not exist)
+        for &arg in args {
+            gen_expr(builder, global, local, None, arg);
+        }
+        return None;
+    } else {
+        let mut arg_vals = Vec::<ClifValue>::with_capacity(args.len());
+        let mut all_valid = true;
+        for (nr, expect_ty) in args.iter().zip(sig.args.iter().map(|(_, t)| t)) {
+            match gen_expr(builder, global, local, Some(expect_ty), *nr) {
+                Some((ty, val)) => {
+                    if !type_matches(global, expect_ty, &ty) {
+                        ErrorContent::MismatchdTypes(expect_ty.clone(), ty.clone())
+                            .wrap(nr.src_loc())
+                            .collect_into(&global.err_collector);
+                        all_valid = false;
+                    }
+                    val.clif_values().for_each(|v| arg_vals.push(v));
+                }
+                None => all_valid = false,
+            }
+        }
+        if all_valid {
+            arg_vals
+        } else {
+            return None;
+        }
+    };
+    let inst = if sig.ret_type.is_never() {
+        builder.ins().call(func_ref, &args);
+        builder.ins().trap(TrapCode::UnreachableCodeReached);
+        return Some((TypeExpr::Never, Value::Empty));
+    } else {
+        builder.ins().call(func_ref, &args)
+    };
+    let result_vals = Value::from(
+        builder
+            .inst_results(inst)
+            .iter()
+            .copied()
+            .collect::<Vec<ClifValue>>(),
+    );
+    let result_ty = sig.ret_type.clone();
+    Some((result_ty, result_vals))
+}
+
 #[must_use]
 fn gen_block(
     builder: &mut FunctionBuilder<'_>,
@@ -319,14 +411,22 @@ fn gen_block(
         [node] => match node.inner() {
             &AstNode::Tail(node) => gen_expr(builder, global, local, expect_ty, node),
             _ => {
-                gen_expr(builder, global, local, None, *node)?;
-                Some((TypeExpr::void(), Value::Empty))
+                let x = gen_expr(builder, global, local, None, *node);
+                match x {
+                    Some((TypeExpr::Never, _)) => return Some((TypeExpr::Never, Value::Empty)),
+                    None => return None,
+                    _ => Some((TypeExpr::void(), Value::Empty)),
+                }
             }
         },
         [.., last] => {
             let body = unsafe { body.get_unchecked(0..body.len() - 1) };
             for &node in body {
-                gen_expr(builder, global, local, None, node);
+                let x = gen_expr(builder, global, local, None, node);
+                match x {
+                    Some((TypeExpr::Never, _)) => return Some((TypeExpr::Never, Value::Empty)),
+                    _ => (),
+                }
             }
             match last.inner() {
                 &AstNode::Tail(node) => gen_expr(builder, global, local, expect_ty, node),
@@ -375,6 +475,7 @@ fn gen_function(
         }
     }
     let mut local = LocalContext::new(
+        &global,
         ret_block,
         ast_func
             .sign
@@ -382,6 +483,7 @@ fn gen_function(
             .iter()
             .map(|(name, _)| *name)
             .zip(args.into_iter()),
+        ast_func.sign.ret_type.clone(),
     );
     local.id_counter = builder.block_params(entry_block).len();
 

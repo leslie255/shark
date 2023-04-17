@@ -1,6 +1,5 @@
 fn exit(_: i32) -> !;
 
 fn main() -> i32 {
-    let x: i64 = 255 + 1;
-    0
+    exit(255);
 }

@@ -1,6 +1,7 @@
 pub mod location;
 
 use std::cell::RefCell;
+use std::fmt::Display;
 
 use location::{IntoSourceLoc, SourceLocation};
 
@@ -8,6 +9,64 @@ use crate::ast::type_expr::TypeExpr;
 use crate::{buffered_content::BufferedContent, token::Token};
 
 use crate::term_color;
+
+// fuck english
+trait IsZeroOrOne
+where
+    Self: Copy,
+{
+    fn is_0_or_1(self) -> bool;
+}
+
+// only natural numbers (unsigned integers) can meaningfully be plural or singular
+macro_rules! impl_is_zero_or_one_for_uint {
+    ($T:ty) => {
+        impl IsZeroOrOne for $T {
+            fn is_0_or_1(self) -> bool {
+                matches!(self, 0 | 1)
+            }
+        }
+    };
+}
+impl_is_zero_or_one_for_uint!(usize);
+impl_is_zero_or_one_for_uint!(u64);
+impl_is_zero_or_one_for_uint!(u32);
+impl_is_zero_or_one_for_uint!(u16);
+impl_is_zero_or_one_for_uint!(u8);
+
+struct MaybePlural<T: IsZeroOrOne> {
+    n: T,
+    s: &'static str,
+    p: &'static str,
+}
+
+impl<T: IsZeroOrOne> Display for MaybePlural<T> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        if self.n.is_0_or_1() {
+            self.s.fmt(f)
+        } else {
+            self.p.fmt(f)
+        }
+    }
+}
+
+/// Formats to "s" if the given number is plural, otherwise formats to ""
+fn add_s_if_plural(n: impl IsZeroOrOne) -> impl Display {
+    MaybePlural {
+        n,
+        s: "",
+        p: "s",
+    }
+}
+
+/// Formats to "are" if the given number is plural, otherwise formats to "is"
+fn is_or_are(n: impl IsZeroOrOne) -> impl Display {
+    MaybePlural {
+        n,
+        s: "is",
+        p: "are",
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum StrOrChar {
@@ -54,11 +113,12 @@ pub enum ErrorContent {
     FuncRedef,
 
     // -- Codegen error
-    FuncWithoutBody,
     UndefinedVar(&'static str),
     MismatchdTypes(TypeExpr, TypeExpr),
     UnaryAdd,
     NoneConreteTypeAsRhs,
+    FuncNotExist(&'static str),
+    MismatchedArgsCount(Option<&'static str>, usize, usize),
 }
 impl ErrorContent {
     #[must_use]
@@ -98,11 +158,12 @@ impl ErrorContent {
             Self::ExprNotAllowedAsFnBody => "expression not allowed as function body",
             Self::ExprNotAllowedAsChild => "expression is not allowed as child",
             Self::FuncRedef => "redefinition of function",
-            Self::FuncWithoutBody => "function without",
             Self::UndefinedVar(..) => "undefined variable",
             Self::MismatchdTypes(..) => "mismatched types",
             Self::UnaryAdd => "unary addition is not allowed",
             Self::NoneConreteTypeAsRhs => "non-concrete type as rhs of `let`",
+            Self::FuncNotExist(..) => "function isn't declared",
+            Self::MismatchedArgsCount(..) => "mismatched number of function parameters",
         }
     }
     fn description(&self) -> String {
@@ -150,7 +211,6 @@ impl ErrorContent {
             }
             Self::ExprNotAllowedAsChild => "This expression is not allowed here".to_string(),
             Self::FuncRedef => "This function was previously declared".to_string(),
-            Self::FuncWithoutBody => "Function without body is not allowed".to_string(),
             Self::UndefinedVar(name) => format!("Variable `{}` isn't defined", name),
             Self::MismatchdTypes(l, r) => format!("Expected {:?}, found {:?}`", l, r),
             Self::UnaryAdd => {
@@ -158,6 +218,17 @@ impl ErrorContent {
                     .to_string()
             }
             Self::NoneConreteTypeAsRhs => "Try explicitly specify a type".to_string(),
+            &Self::FuncNotExist(name) => format!("The function `{}` doesn't exist", name),
+            &Self::MismatchedArgsCount(name, expected, provided) => {
+                format!(
+                    "{} takes in {} argument{}, but only {} {} provided",
+                    name.unwrap_or("the function"),
+                    expected,
+                    add_s_if_plural(expected),
+                    provided,
+                    is_or_are(provided),
+                )
+            }
         }
     }
 }

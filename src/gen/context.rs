@@ -10,7 +10,7 @@ use cranelift::prelude::{AbiParam, Block, EntityRef, Signature as ClifSignature}
 use cranelift_codegen::{ir::FuncRef, isa::CallConv};
 use cranelift_frontend::Variable;
 use cranelift_module::{FuncId, Linkage, Module};
-use cranelift_object::ObjectModule;
+use cranelift_object::{ObjectModule, ObjectProduct};
 
 use crate::{
     ast::{parser::AstParser, type_expr::TypeExpr, AstNode, Signature},
@@ -63,6 +63,7 @@ pub(super) struct FuncInfo {
     pub ret_ty: FlatType,
     pub index: u32,
     pub clif_sig: ClifSignature,
+    pub sig: Signature,
 }
 
 /// Information about the parent loop block, stored inside `LocalContext` as a stack
@@ -90,16 +91,26 @@ pub(super) struct LocalContext {
     pub id_counter: usize,
     loops: Vec<LoopInfo>,
     ret_block: Block,
+    func_ret_ty: TypeExpr,
+    func_ret_ty_flat: FlatType,
 }
 
 impl LocalContext {
-    pub fn new(ret_block: Block, args: impl Iterator<Item = (&'static str, VarInfo)>) -> Self {
+    pub fn new(
+        global: &GlobalContext,
+        ret_block: Block,
+        args: impl Iterator<Item = (&'static str, VarInfo)>,
+        func_ret_ty: TypeExpr,
+    ) -> Self {
+        let func_ret_ty_flat = trans_ty(global, &func_ret_ty);
         Self {
             imported_funcs: HashMap::new(),
             vars: vec![args.collect()],
             id_counter: 0,
             loops: Vec::new(),
             ret_block,
+            func_ret_ty,
+            func_ret_ty_flat,
         }
     }
 
@@ -190,6 +201,14 @@ impl LocalContext {
     pub fn ret_block(&self) -> Block {
         self.ret_block
     }
+
+    pub(super) fn func_ret_ty(&self) -> &TypeExpr {
+        &self.func_ret_ty
+    }
+
+    pub(super) fn func_ret_ty_flat(&self) -> &FlatType {
+        &self.func_ret_ty_flat
+    }
 }
 
 fn make_var_info(global: &GlobalContext, id_counter: &mut usize, ty: TypeExpr) -> VarInfo {
@@ -230,6 +249,10 @@ impl GlobalContext {
         }
     }
 
+    pub fn finish(self) -> ObjectProduct {
+        self.obj_module.into_inner().finish()
+    }
+
     pub fn compile(self) -> Vec<u8> {
         self.obj_module.into_inner().finish().emit().unwrap()
     }
@@ -260,6 +283,7 @@ impl GlobalContext {
             ret_ty,
             index,
             clif_sig,
+            sig,
         };
         match self.funcs.insert(name, func_info) {
             Some(..) => Err(()),
@@ -308,7 +332,8 @@ pub fn build_global_context(
 /// Translate a function signature information to cranelift signature.
 /// Returns the clif signature, the flattened argument variables, and the flattened return type.
 fn trans_sig(global: &GlobalContext, sig: &Signature) -> (ClifSignature, Vec<VarInfo>, FlatType) {
-    let mut clif_sig = ClifSignature::new(CallConv::SystemV);
+    let call_conv = CallConv::SystemV;
+    let mut clif_sig = ClifSignature::new(call_conv);
     let mut args = Vec::<VarInfo>::with_capacity(sig.args.len());
     clif_sig.params.reserve(sig.args.len());
     let mut id_counter = 0usize;

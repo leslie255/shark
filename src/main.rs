@@ -10,7 +10,7 @@ mod string;
 mod term_color;
 mod token;
 
-use std::{env, rc::Rc};
+use std::{env, rc::Rc, fs};
 
 use ast::parser::AstParser;
 use buffered_content::BufferedContent;
@@ -32,5 +32,13 @@ fn main() {
 
     gen::compile(&mut global_context, &ast_parser.ast);
 
+    let bytes = global_context.finish().emit().unwrap();
+    write_bytes_to_file("output.o", &bytes).unwrap();
+
     err_collector.print_and_dump_all(&buffers);
+}
+
+fn write_bytes_to_file(path: &str, buf: &[u8]) -> std::io::Result<()> {
+    let mut file = fs::File::create(path)?;
+    std::io::prelude::Write::write_all(&mut file, buf)
 }

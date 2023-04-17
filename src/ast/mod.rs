@@ -132,6 +132,14 @@ impl AstNode {
                 | &AstNode::EnumDef(_)
         )
     }
+
+    pub fn as_identifier(&self) -> Option<&'static str> {
+        if let &Self::Identifier(v) = self {
+            Some(v)
+        } else {
+            None
+        }
+    }
 }
 
 impl Default for AstNode {
