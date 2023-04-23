@@ -308,6 +308,7 @@ pub fn build_global_context(
     let mut global = GlobalContext::prototype(obj_module, err_collector);
     let mut next_func_index = 0u32;
     for item in ast_parser.iter() {
+        let item = item.as_ref();
         match item.inner() {
             AstNode::FnDef(function) => {
                 let func_index = next_func_index;

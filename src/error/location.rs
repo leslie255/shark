@@ -1,6 +1,6 @@
 use std::{
     fmt::{Debug, Display},
-    ops::{Deref, Range},
+    ops::{Deref, DerefMut, Range},
 };
 
 use crate::string::SourceIndex;
@@ -174,6 +174,12 @@ impl<T> Traced<T> {
     pub fn inner(&self) -> &T {
         &self.inner
     }
+    /// Returns the wrapped content by mutable reference
+    #[inline]
+    #[must_use]
+    pub fn inner_mut(&mut self) -> &mut T {
+        &mut self.inner
+    }
     /// Consumes `self` and returns the wrapped content
     #[inline]
     #[must_use]
@@ -192,6 +198,11 @@ impl<T> Deref for Traced<T> {
 
     fn deref(&self) -> &Self::Target {
         &self.inner
+    }
+}
+impl<T> DerefMut for Traced<T> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.inner
     }
 }
 impl<T> Debug for Traced<T>

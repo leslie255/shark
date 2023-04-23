@@ -4,6 +4,7 @@ use std::fmt::{Debug, Display, Formatter};
 /// `gen::type_matches` to comparing with co-variance
 #[derive(Clone, PartialEq, Eq)]
 pub enum TypeExpr {
+    INVALID,
     USize,
     ISize,
     U128,
@@ -141,6 +142,7 @@ impl TypeExpr {
 impl Debug for TypeExpr {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         match self {
+            Self::INVALID => writeln!(f, "{{invalid}}")?,
             Self::USize => write!(f, "usize")?,
             Self::ISize => write!(f, "isize")?,
             Self::U128 => write!(f, "u128")?,

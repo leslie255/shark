@@ -2,26 +2,37 @@ pub mod parser;
 pub mod type_expr;
 
 use std::{
-    fmt::{Debug, Write},
+    collections::HashMap,
+    fmt::{Debug, Display, Write},
     ops::Deref,
 };
 
 use crate::{
     error::location::{IntoSourceLoc, Traced},
     token::NumValue,
+    gen::ClifType,
 };
 use type_expr::TypeExpr;
 
 /// All AST nodes are stored inside a pool
 /// Uses `AstNodeRef` for inter-reference between nodes
-/// Does not implement `Clone` because `AstNodeRef` has a pointer pointing to the `node_pool`
-/// inside the struct, to be able to clone it, use `Rc<Ast>` (immutable) or `Rc<RefCell<Ast>>`
-/// (mutable)
 #[derive(Debug, Default)]
 pub struct Ast {
+    /// Pool of nodes with a mut lock
     node_pool: Box<Vec<Traced<AstNode>>>,
     pub str_pool: Vec<String>,
     pub root_nodes: Vec<AstNodeRef>,
+}
+
+/// Type checked AST with attached type informations for variables
+/// Wrapped as another type to prevent backflowing of data
+#[derive(Debug, Default)]
+pub struct CookedAst(pub(super) Ast);
+impl Deref for CookedAst {
+    type Target = Ast;
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
 }
 
 impl Ast {
@@ -31,11 +42,10 @@ impl Ast {
     pub fn add_node(&mut self, new_node: Traced<AstNode>) -> AstNodeRef {
         self.node_pool.push(new_node);
         let i = self.node_pool.len() - 1;
-        let node_ref = AstNodeRef {
-            pool: self.node_pool.deref() as *const Vec<Traced<AstNode>>,
+        AstNodeRef {
+            pool: self.node_pool.as_mut() as *mut Vec<Traced<AstNode>>,
             i,
-        };
-        node_ref
+        }
     }
     /// Add a new string to `str_pool` and return the index of that string
     pub fn add_str(&mut self, str: String) -> usize {
@@ -44,13 +54,24 @@ impl Ast {
     }
 }
 
+#[derive(Debug, Clone, Copy)]
+pub struct Variable(usize);
+impl Display for Variable {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "var{}", self.0)
+    }
+}
+
 /// A node inside an AST
 #[derive(Debug, Clone)]
 pub enum AstNode {
     // --- Simple things
-    /// Sliced from source
+    // Global identifier
     Identifier(&'static str),
+    // Local variables, names of the variables are stored in the parent `Function`
+    Variable(Variable),
     Number(NumValue),
+    TypedNumber(ClifType, NumValue),
     /// By index in `Ast.str_pool`
     String(usize),
     Char(char),
@@ -153,32 +174,22 @@ impl Default for AstNode {
 /// Should only be initialized by an Ast
 #[derive(Clone, Copy)]
 pub struct AstNodeRef {
-    pool: *const Vec<Traced<AstNode>>,
+    pool: *mut Vec<Traced<AstNode>>,
     i: usize,
 }
-impl Deref for AstNodeRef {
-    type Target = Traced<AstNode>;
-
-    /// Dereferences the `AstNodeRef` to the `AstNode` it points to
-    /// Due to limitations of the `Deref` trait, the returned reference only a lifetime as long as
-    /// the lifetime of `&self`, but the correct behavior should be that the returned reference has
-    /// a lifetime longer than `'s`, so always use `AstNodeRef::as_ref` instead of
-    /// `AstNodeRef::deref` for explicit dereference
-    #[inline]
-    fn deref(&self) -> &Self::Target {
+impl AsRef<Traced<AstNode>> for AstNodeRef {
+    fn as_ref(&self) -> &Traced<AstNode> {
         unsafe { (*self.pool).get_unchecked(self.i) }
+    }
+}
+impl AsMut<Traced<AstNode>> for AstNodeRef {
+    fn as_mut(&mut self) -> &mut Traced<AstNode> {
+        unsafe { (*self.pool).get_unchecked_mut(self.i) }
     }
 }
 impl Debug for AstNodeRef {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        self.deref().fmt(f)
-    }
-}
-
-impl AstNodeRef {
-    #[inline]
-    pub fn as_ref(&self) -> &Traced<AstNode> {
-        unsafe { (*self.pool).get_unchecked(self.i) }
+        self.as_ref().fmt(f)
     }
 }
 
@@ -224,11 +235,55 @@ impl Debug for Signature {
     }
 }
 
+#[derive(Clone, Default)]
+pub struct VarTable {
+    pub vars: Vec<(&'static str, TypeExpr)>,
+    pub var_ids: HashMap<&'static str, usize>,
+}
+impl VarTable {
+    /// Get the variable ID from a name
+    pub fn var_id(&self, name: &str) -> Option<Variable> {
+        self.var_ids.get(name).map(|&id| Variable(id))
+    }
+
+    /// Get the name of the variable from its ID
+    pub fn var_name(&self, id: Variable) -> Option<&'static str> {
+        self.vars.get(id.0).map(|(name, _)| *name)
+    }
+
+    /// Get the type of the variable from its ID
+    pub fn var_ty(&self, id: Variable) -> Option<&TypeExpr> {
+        self.vars.get(id.0).map(|(_, ty)| ty)
+    }
+
+    pub fn var_ty_mut(&mut self, id: Variable) -> Option<&mut TypeExpr> {
+        self.vars.get_mut(id.0).map(|(_, ty)| ty)
+    }
+
+    pub fn add_var(&mut self, name: &'static str, ty: TypeExpr) {
+        let id = self.vars.len();
+        self.var_ids.insert(name, id);
+        self.vars.push((name, ty));
+    }
+}
+
 #[derive(Clone)]
 pub struct Function {
     pub name: &'static str,
     pub sign: Signature,
     pub body: Option<Vec<AstNodeRef>>,
+    pub var_table: VarTable,
+}
+
+impl Function {
+    pub fn new(name: &'static str, sign: Signature, body: Option<Vec<AstNodeRef>>) -> Self {
+        Self {
+            name,
+            sign,
+            body,
+            var_table: VarTable::default(),
+        }
+    }
 }
 
 impl Debug for Function {
@@ -241,16 +296,31 @@ impl Debug for Function {
         if f.alternate() {
             writeln!(f, " {{")?;
             for n in body {
+                let n = n.as_ref();
                 f.pad("")?;
                 writeln!(f, "\t{:?}\n\t{:?}\n", n.src_loc(), n)?;
             }
         } else {
             write!(f, "{{")?;
-            for n in body {
+            for n in body.iter() {
+                let n = n.as_ref();
                 write!(f, "{:?}\t{:?};", n.src_loc(), n)?;
             }
         }
-        write!(f, "}}")?;
+        write!(f, "}},")?;
+        if f.alternate() {
+            writeln!(f, "")?;
+        }
+        f.pad("vars:")?;
+        f.debug_map()
+            .entries(
+                self.var_table
+                    .vars
+                    .iter()
+                    .enumerate()
+                    .map(|(i, x)| (Variable(i), x)),
+            )
+            .finish()?;
         Ok(())
     }
 }

@@ -23,19 +23,21 @@ fn main() {
     let buffers = Rc::new(BufferedContent::default());
     let err_collector = Rc::new(ErrorCollector::default());
     let mut ast_parser = AstParser::new(&file_name, Rc::clone(&buffers), Rc::clone(&err_collector));
-    let mut global_context = gen::build_global_context(
+    let global_context = gen::build_global_context(
         &mut ast_parser,
         gen::make_empty_obj_module("output"),
         Rc::clone(&err_collector),
     );
     dbg!(&global_context);
+    let cooked_ast = gen::cook_ast(&global_context, ast_parser.ast);
+    dbg!(&cooked_ast.0.root_nodes);
 
-    gen::compile(&mut global_context, &ast_parser.ast);
+    //gen::compile(&mut global_context, &ast_parser.ast);
 
-    let bytes = global_context.finish().emit().unwrap();
-    write_bytes_to_file("output.o", &bytes).unwrap();
+    //let bytes = global_context.finish().emit().unwrap();
+    //write_bytes_to_file("output.o", &bytes).unwrap();
 
-    err_collector.print_and_dump_all(&buffers);
+    //err_collector.print_and_dump_all(&buffers);
 }
 
 fn write_bytes_to_file(path: &str, buf: &[u8]) -> std::io::Result<()> {

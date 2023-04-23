@@ -15,8 +15,8 @@ use crate::{
 use self::type_parser::parse_type_expr;
 
 use super::{
-    type_expr::TypeExpr, Ast, AstNode, AstNodeRef, EnumDef, Function, Signature, IfExpr, MathOpKind,
-    StructOrUnionDef,
+    type_expr::TypeExpr, Ast, AstNode, AstNodeRef, EnumDef, Function, IfExpr, MathOpKind,
+    Signature, StructOrUnionDef,
 };
 
 /// Owns a `TokenStream` and parses it into AST incrementally
@@ -340,21 +340,15 @@ impl AstParser {
                     $else;
                 }
                 let token_loc = self.token_stream.next()?.src_loc();
+                let lhs_loc = node.src_loc();
                 let lhs_node_ref = self.ast.add_node(node);
                 let rhs_node = self
                     .parse_expr($precedence)
                     .ok_or(ErrorContent::UnexpectedEOF.wrap(token_loc))
                     .collect_err(&self.err_collector)?;
+                let rhs_loc = rhs_node.src_loc();
                 let rhs_node_ref = self.ast.add_node(rhs_node);
-                let lhs_pos = lhs_node_ref.src_loc();
-                let file_name = lhs_pos.file_name;
-                let start_index = lhs_pos.range.0;
-                let end_index = rhs_node_ref.src_loc().range.1;
-                (
-                    lhs_node_ref,
-                    rhs_node_ref,
-                    (file_name, start_index, end_index),
-                )
+                (lhs_node_ref, rhs_node_ref, lhs_loc.join(rhs_loc))
             }};
         }
         // If there is an operator and the precedence matches, parse the rhs, "swallow" the node,
@@ -752,6 +746,8 @@ impl AstParser {
                 .parse_expr(15)
                 .ok_or(ErrorContent::UnexpectedEOF.wrap(start_loc))
                 .collect_err(&self.err_collector)?;
+            let src_loc = node.src_loc();
+            let omit_semicolon = node.allow_omit_semicolon();
             let node = self.ast.add_node(node);
             let peek = peek_token!(self, start_loc);
             end_loc = peek.src_loc();
@@ -771,15 +767,14 @@ impl AstParser {
                 }
                 Token::BraceClose => {
                     self.token_stream.next();
-                    let src_loc = node.src_loc();
                     let node = AstNode::Tail(node).traced(src_loc);
                     nodes.push(self.ast.add_node(node));
                     break;
                 }
                 _ => {
-                    if !node.allow_omit_semicolon() {
+                    if !omit_semicolon {
                         ErrorContent::ExpectsSemicolon
-                            .wrap(node.src_loc())
+                            .wrap(src_loc)
                             .collect_into(&self.err_collector);
                     }
                     nodes.push(node);
@@ -860,11 +855,7 @@ impl AstParser {
             _ => todo!("error"),
         };
 
-        let node = AstNode::FnDef(Function {
-            name,
-            sign: Signature { args, ret_type },
-            body,
-        });
+        let node = AstNode::FnDef(Function::new(name, Signature { args, ret_type }, body));
         Some(node.traced((start_loc.file_name, start_loc.range.0, end_loc)))
     }
 

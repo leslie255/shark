@@ -119,6 +119,7 @@ pub enum ErrorContent {
     NoneConreteTypeAsRhs,
     FuncNotExist(&'static str),
     MismatchedArgsCount(Option<&'static str>, usize, usize),
+    UnreachableExpr,
 }
 impl ErrorContent {
     #[must_use]
@@ -164,6 +165,7 @@ impl ErrorContent {
             Self::NoneConreteTypeAsRhs => "non-concrete type as rhs of `let`",
             Self::FuncNotExist(..) => "function isn't declared",
             Self::MismatchedArgsCount(..) => "mismatched number of function parameters",
+            Self::UnreachableExpr => "unreachable expressions",
         }
     }
     fn description(&self) -> String {
@@ -229,6 +231,7 @@ impl ErrorContent {
                     is_or_are(provided),
                 )
             }
+            Self::UnreachableExpr => "Code following this expression are not reachable".to_string(),
         }
     }
 }
