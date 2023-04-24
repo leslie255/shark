@@ -120,6 +120,7 @@ pub enum ErrorContent {
     FuncNotExist(&'static str),
     MismatchedArgsCount(Option<&'static str>, usize, usize),
     UnreachableExpr,
+    InvalidLetLHS,
 }
 impl ErrorContent {
     #[must_use]
@@ -166,6 +167,7 @@ impl ErrorContent {
             Self::FuncNotExist(..) => "function isn't declared",
             Self::MismatchedArgsCount(..) => "mismatched number of function parameters",
             Self::UnreachableExpr => "unreachable expressions",
+            Self::InvalidLetLHS => "invalid lhs for `let`",
         }
     }
     fn description(&self) -> String {
@@ -232,6 +234,7 @@ impl ErrorContent {
                 )
             }
             Self::UnreachableExpr => "Code following this expression are not reachable".to_string(),
+            Self::InvalidLetLHS => "Only variable or tuple of variable is allowed as LHS of `let`".to_string(),
         }
     }
 }

@@ -224,8 +224,6 @@ impl AstParser {
     /// - `precedence`: The precedence of the expression.
     /// (only used in recursive calls, when calling from outside always use `15`)
     ///
-    /// - `expects_semicolon`: Whether the expression should be followed by a semicolon.
-    ///
     /// # Returns
     /// The parsed expression, or `None` if EOF
     /// Errors collected internally
@@ -542,16 +540,13 @@ impl AstParser {
     #[must_use]
     #[inline]
     fn parse_let(&mut self, start_loc: SourceLocation) -> Option<Traced<AstNode>> {
-        // Get variable name
-        let next_token = next_token!(self, start_loc);
-        let token_location = next_token.src_loc();
-        let var_name = next_token
-            .expect_identifier()
-            .ok_or(ErrorContent::ExpectToken(Token::Identifier("")).wrap(token_location))
-            .collect_err(&self.err_collector)?;
+        // Get lhs
+        let lhs_node = self.parse_expr(13)?;
+        let lhs_loc = lhs_node.src_loc();
+        let lhs_node = self.ast.add_node(lhs_node);
 
         // Get type
-        let mut peeked_token = peek_token!(self, token_location);
+        let mut peeked_token = peek_token!(self, lhs_loc);
         let mut peeked_location = peeked_token.src_loc();
         let var_type = match peeked_token.inner() {
             Token::Colon => {
@@ -592,7 +587,7 @@ impl AstParser {
                 .collect_into(&self.err_collector),
             _ => (),
         }
-        Some(AstNode::Let(var_name, var_type, rhs).traced(node_loc))
+        Some(AstNode::Let(lhs_node, var_type, rhs).traced(node_loc))
     }
 
     /// Parse arguments in a function call, starting from the `(`
@@ -677,7 +672,7 @@ impl AstParser {
             Token::Comma => {
                 self.token_stream.next();
                 let mut previous_loc = peek_loc;
-                let mut nodes = vec![inner_node];
+                let mut nodes = vec![self.ast.add_node(inner_node)];
                 let end_loc = loop {
                     let peek = peek_token!(self, previous_loc);
                     let peek_loc = peek.src_loc();
@@ -690,7 +685,7 @@ impl AstParser {
                         .ok_or(ErrorContent::UnexpectedEOF.wrap(peek_loc))
                         .collect_err(&self.err_collector)?;
                     previous_loc = node.src_loc();
-                    nodes.push(node);
+                    nodes.push(self.ast.add_node(node));
                     let peek = peek_token!(self, previous_loc);
                     let peek_loc = peek.src_loc();
                     match peek.inner() {

@@ -29,7 +29,10 @@ fn main() {
         Rc::clone(&err_collector),
     );
     dbg!(&global_context);
+    println!("-------------- Raw AST:");
+    dbg!(&ast_parser.ast.root_nodes);
     let cooked_ast = gen::cook_ast(&global_context, ast_parser.ast);
+    println!("-------------- Cooked AST:");
     dbg!(&cooked_ast.0.root_nodes);
 
     //gen::compile(&mut global_context, &ast_parser.ast);

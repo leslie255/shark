@@ -80,7 +80,7 @@ pub fn cook_ast(global: &GlobalContext, mut ast: Ast) -> CookedAst {
 fn typecheck_func(global: &GlobalContext, func: &mut Function) {
     let var_table = &mut func.var_table;
     for (arg_name, arg_ty) in func.sign.args.iter() {
-        var_table.add_var(&arg_name, arg_ty.clone())
+        var_table.add_var(&arg_name, arg_ty.clone());
     }
     let body: &mut [AstNodeRef] = match func.body {
         Some(ref mut x) => x,
@@ -141,7 +141,7 @@ fn typecheck_expr(
         AstNode::UnarySub(_) => todo!(),
         AstNode::UnaryAdd(_) => todo!(),
         AstNode::Call(_, _) => todo!(),
-        AstNode::Let(_, _, _) => todo!(),
+        AstNode::Let(lhs, ty, rhs) => cook_let(global, var_table, *lhs, ty.as_ref(), *rhs),
         AstNode::Assign(_, _) => todo!(),
         AstNode::MathOpAssign(_, _, _) => todo!(),
         AstNode::BitOpAssign(_, _, _) => todo!(),
@@ -210,4 +210,38 @@ fn make_typed_num(
         }
     };
     AstNode::TypedNumber(ty, num_val)
+}
+
+fn cook_let(
+    global: &GlobalContext,
+    var_table: &mut VarTable,
+    lhs: AstNodeRef,
+    ty: Option<&TypeExpr>,
+    rhs: Option<AstNodeRef>,
+) {
+    let ty = ty.expect("TODO: type infer");
+    cook_let_lhs(global, var_table, lhs, ty.clone());
+    if let Some(rhs) = rhs {
+        typecheck_expr(global, var_table, rhs, ty);
+    }
+}
+
+fn cook_let_lhs(
+    global: &GlobalContext,
+    var_table: &mut VarTable,
+    mut node: AstNodeRef,
+    ty: TypeExpr,
+) {
+    let node = node.as_mut();
+    let loc = node.src_loc();
+    match node.inner_mut() {
+        &mut AstNode::Identifier(name) => {
+            let var = var_table.add_var(name, ty);
+            *node = AstNode::Variable(var).traced(loc);
+        }
+        AstNode::Tuple(_) => todo!(),
+        _ => ErrorContent::InvalidLetLHS
+            .wrap(loc)
+            .collect_into(&global.err_collector),
+    }
 }

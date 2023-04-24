@@ -3,7 +3,7 @@ pub mod type_expr;
 
 use std::{
     collections::HashMap,
-    fmt::{Debug, Display, Write},
+    fmt::{Debug, Write},
     ops::Deref,
 };
 
@@ -54,9 +54,9 @@ impl Ast {
     }
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Clone, Copy)]
 pub struct Variable(usize);
-impl Display for Variable {
+impl Debug for Variable {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "var{}", self.0)
     }
@@ -97,7 +97,7 @@ pub enum AstNode {
     Call(AstNodeRef, Vec<AstNodeRef>),
 
     // --- Assignments
-    Let(&'static str, Option<TypeExpr>, Option<AstNodeRef>),
+    Let(AstNodeRef, Option<TypeExpr>, Option<AstNodeRef>),
     Assign(AstNodeRef, AstNodeRef),
     /// +=, -=, *=, /=, %=
     MathOpAssign(MathOpKind, AstNodeRef, AstNodeRef),
@@ -126,7 +126,7 @@ pub enum AstNode {
     UnionDef(StructOrUnionDef),
     EnumDef(EnumDef),
 
-    Tuple(Vec<Traced<AstNode>>),
+    Tuple(Vec<AstNodeRef>),
 }
 impl AstNode {
     /// Create a `Traced<AstNode> from this `AstNode`
@@ -260,10 +260,11 @@ impl VarTable {
         self.vars.get_mut(id.0).map(|(_, ty)| ty)
     }
 
-    pub fn add_var(&mut self, name: &'static str, ty: TypeExpr) {
+    pub fn add_var(&mut self, name: &'static str, ty: TypeExpr) -> Variable {
         let id = self.vars.len();
         self.var_ids.insert(name, id);
         self.vars.push((name, ty));
+        Variable(id)
     }
 }
 
