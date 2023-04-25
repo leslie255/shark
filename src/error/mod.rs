@@ -121,6 +121,7 @@ pub enum ErrorContent {
     MismatchedArgsCount(Option<&'static str>, usize, usize),
     UnreachableExpr,
     InvalidLetLHS,
+    InvalidAssignLHS,
 }
 impl ErrorContent {
     #[must_use]
@@ -168,6 +169,7 @@ impl ErrorContent {
             Self::MismatchedArgsCount(..) => "mismatched number of function parameters",
             Self::UnreachableExpr => "unreachable expressions",
             Self::InvalidLetLHS => "invalid lhs for `let`",
+            Self::InvalidAssignLHS => "invalid lhs for assignment",
         }
     }
     fn description(&self) -> String {
@@ -216,7 +218,7 @@ impl ErrorContent {
             Self::ExprNotAllowedAsChild => "This expression is not allowed here".to_string(),
             Self::FuncRedef => "This function was previously declared".to_string(),
             Self::UndefinedVar(name) => format!("Variable `{}` isn't defined", name),
-            Self::MismatchdTypes(l, r) => format!("Expected {:?}, found {:?}`", l, r),
+            Self::MismatchdTypes(l, r) => format!("Expected `{:?}`, found `{:?}`", l, r),
             Self::UnaryAdd => {
                 "Try removing the leading `+`, or if it you meant plus, try adding an LHS"
                     .to_string()
@@ -225,7 +227,7 @@ impl ErrorContent {
             &Self::FuncNotExist(name) => format!("The function `{}` doesn't exist", name),
             &Self::MismatchedArgsCount(name, expected, provided) => {
                 format!(
-                    "{} takes in {} argument{}, but only {} {} provided",
+                    "`{}` takes in {} argument{}, but only {} {} provided",
                     name.unwrap_or("the function"),
                     expected,
                     add_s_if_plural(expected),
@@ -234,7 +236,8 @@ impl ErrorContent {
                 )
             }
             Self::UnreachableExpr => "Code following this expression are not reachable".to_string(),
-            Self::InvalidLetLHS => "Only variable or tuple of variable is allowed as LHS of `let`".to_string(),
+            Self::InvalidLetLHS => "Only variable or tuple of variables is allowed as LHS of `let`".to_string(),
+            Self::InvalidAssignLHS => "Only variable or tuple of variables is allowed as LHS of assignment".to_string(),
         }
     }
 }

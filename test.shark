@@ -1,4 +1,13 @@
+fn exit() -> !;
+
 fn main() -> i32 {
-    let a: i32 = 0;
-    a
+    let a: i32 = 255;
+    let c = 'h';
+    // ! should coerce to any type
+    let never: i32 = exit();
+    c = 'l';
+    // {integer} cannot be assigned to char
+    c = 16;
+    // char cannot be used as tail in a function of return type i32
+    c
 }

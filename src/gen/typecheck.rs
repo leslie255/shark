@@ -1,8 +1,13 @@
+use std::borrow::Cow;
+
 use crate::{
-    ast::{type_expr::TypeExpr, Ast, AstNode, AstNodeRef, CookedAst, Function, VarTable, Variable},
+    ast::{
+        type_expr::{self, TypeExpr},
+        Ast, AstNode, AstNodeRef, CookedAst, Function, VarTable, Variable,
+    },
     error::{
         location::{SourceLocation, Traced},
-        ErrorContent,
+        CollectIfErr, ErrorContent,
     },
     token::NumValue,
 };
@@ -13,6 +18,9 @@ use super::{clif_types, ClifType, GlobalContext};
 pub fn type_matches(global: &GlobalContext, expect: &TypeExpr, found: &TypeExpr) -> bool {
     use TypeExpr::*;
     match (expect, found) {
+        (TypeName(..), TypeName(..)) => todo!(),
+        (TypeName(..), _) => todo!(),
+        (_, TypeName(..)) => todo!(),
         (_, Never) | (_, _Unknown) => true,
         (USize, USize)
         | (ISize, ISize)
@@ -37,13 +45,25 @@ pub fn type_matches(global: &GlobalContext, expect: &TypeExpr, found: &TypeExpr)
         (Array(_, lhs), Array(_, rhs)) => type_matches(global, lhs, rhs),
         (Tuple(lhs), Tuple(rhs)) if lhs.len() != rhs.len() => false,
         (Tuple(lhs), Tuple(rhs)) => {
-            for (lhs, rhs) in lhs.iter().zip(rhs.iter()) {
+            let mut rhs_iter = rhs.iter();
+            for lhs in lhs.iter() {
+                // we know that lhs and rhs have the same length
+                let rhs = unsafe { rhs_iter.next().unwrap_unchecked() };
                 if !type_matches(global, lhs, rhs) {
                     return false;
                 }
             }
             true
         }
+        // tuple of one field is the same as a value due to limitations of the syntax
+        (Tuple(lhs), rhs) => match lhs.as_slice() {
+            [lhs] => type_matches(global, lhs, rhs),
+            _ => false,
+        },
+        (lhs, Tuple(rhs)) => match rhs.as_slice() {
+            [rhs] => type_matches(global, lhs, rhs),
+            _ => false,
+        },
         (Fn(l_args, l_ret), Fn(r_args, r_ret)) => {
             // TODO: counter-variance logic
             for (lhs, rhs) in l_args.iter().zip(r_args.iter()) {
@@ -53,18 +73,78 @@ pub fn type_matches(global: &GlobalContext, expect: &TypeExpr, found: &TypeExpr)
             }
             l_ret == r_ret
         }
-        (TypeName(..), TypeName(..)) => todo!(),
-        (TypeName(..), _) => todo!(),
-        (_, TypeName(..)) => todo!(),
-        (lhs, _Numeric) => lhs.is_u() || lhs.is_i() || lhs.is_f(),
-        (lhs, _Int) => lhs.is_u() || lhs.is_i(),
-        (lhs, _SInt) => lhs.is_i(),
-        (lhs, _Float) => lhs.is_f(),
+        (_Float, found) => found.is_any_numeric(),
+        (_SInt, found) => found.is_any_numeric() && !found.is_f(),
+        (_Int, found) => found.is_any_numeric() && !found.is_u() && !found.is_f(),
+        (expect, _Int) => expect.is_any_numeric(),
+        (expect, _SInt) => expect.is_any_numeric() && !expect.is_u(),
+        (expect, _Float) => expect.is_any_numeric() && !expect.is_u() && !expect.is_i(),
         _ => false,
     }
 }
 
-#[allow(unused_variables)]
+/// Infer a type from an **uncooked** AST node
+fn infer_type(global: &GlobalContext, var_table: &VarTable, node: &AstNode) -> Option<TypeExpr> {
+    match node {
+        &AstNode::Identifier(name) => var_table
+            .var_id(name)
+            .and_then(|var| var_table.var_ty(var).cloned()),
+        AstNode::Number(NumValue::U(..)) => Some(TypeExpr::_Int),
+        AstNode::Number(NumValue::I(..)) => Some(TypeExpr::_SInt),
+        AstNode::Number(NumValue::F(..)) => Some(TypeExpr::_Float),
+        AstNode::String(_) => todo!("string literals"),
+        AstNode::Char(..) => Some(TypeExpr::Char),
+        AstNode::Bool(..) => Some(TypeExpr::Bool),
+        AstNode::Array(elements) => match elements.as_slice() {
+            [] => Some(TypeExpr::Array(0, Box::new(TypeExpr::void()))),
+            elements => infer_type(
+                global,
+                var_table,
+                unsafe { elements.get_unchecked(0) }.as_ref().inner(),
+            ),
+        },
+        AstNode::MathOp(_, lhs, _) | AstNode::BitOp(_, lhs, _) => {
+            infer_type(global, var_table, lhs.as_ref().inner())
+        }
+        AstNode::BoolOp(..) | AstNode::Cmp(..) | AstNode::BoolNot(..) => Some(TypeExpr::Bool),
+        AstNode::MemberAccess(_, _) => todo!(),
+        AstNode::BitNot(n) | AstNode::UnarySub(n) | AstNode::UnaryAdd(n) => {
+            infer_type(global, var_table, n.as_ref().inner())
+        }
+        AstNode::Call(callee, _) => match callee.as_ref().inner() {
+            &AstNode::Identifier(name) => global.func(name).map(|info| info.sig.ret_type.clone()),
+            _ => todo!("Indirect function calling"),
+        },
+        AstNode::TakeRef(node) => {
+            let inner = infer_type(global, var_table, node.as_ref().inner())?;
+            Some(TypeExpr::Ref(Box::new(inner)))
+        }
+        AstNode::Deref(node) => match infer_type(global, var_table, node.as_ref().inner())? {
+            TypeExpr::Ref(t) | TypeExpr::Ptr(t) => Some(t.as_ref().clone()),
+            _ => None,
+        },
+        AstNode::Block(_) => todo!("type infer for block"),
+        AstNode::If(_) => todo!("type infer for if"),
+        AstNode::Loop(_) => todo!("type infer for loop"),
+        AstNode::Return(..) | AstNode::Break | AstNode::Continue => Some(TypeExpr::Never),
+        AstNode::Typecast(_, ty) => Some(ty.clone()),
+        AstNode::Tuple(_) => todo!("type infer for tuple"),
+        AstNode::Let(..)
+        | AstNode::Assign(..)
+        | AstNode::MathOpAssign(..)
+        | AstNode::BitOpAssign(..)
+        | AstNode::TypeDef(_, _)
+        | AstNode::StructDef(_)
+        | AstNode::UnionDef(_)
+        | AstNode::EnumDef(_)
+        | AstNode::FnDef(_) => None,
+        // tail is handled specially outside
+        AstNode::Tail(_) => unreachable!(),
+        // only appears in cooked AST
+        AstNode::TypedNumber(..) | AstNode::Variable(..) => unreachable!(),
+    }
+}
+
 /// Type check and AST and attack type informations to it, making a `CookedAst`
 pub fn cook_ast(global: &GlobalContext, mut ast: Ast) -> CookedAst {
     for root_node in ast.root_nodes.iter_mut() {
@@ -89,13 +169,13 @@ fn typecheck_func(global: &GlobalContext, func: &mut Function) {
     for node_ref in body.iter() {
         let node = node_ref.as_ref().inner();
         match node {
-            &AstNode::Tail(node) => typecheck_expr(global, var_table, node, &func.sign.ret_type),
-            _ => typecheck_expr(global, var_table, *node_ref, &TypeExpr::_Unknown),
-        }
+            &AstNode::Tail(node) => cook_expr(global, var_table, node, &func.sign.ret_type),
+            _ => cook_expr(global, var_table, *node_ref, &TypeExpr::_Unknown),
+        };
     }
 }
 
-fn typecheck_expr(
+fn cook_expr(
     global: &GlobalContext,
     var_table: &mut VarTable,
     mut node: AstNodeRef,
@@ -108,7 +188,7 @@ fn typecheck_expr(
         AstNode::Identifier(var_name) => match var_table.var_id(var_name) {
             Some(var) => {
                 *node = AstNode::Variable(var);
-                typecheck_var(global, var_table, node_loc, var, expect_ty);
+                cook_var(global, var_table, node_loc, var, expect_ty);
             }
             None => ErrorContent::UndefinedVar(&var_name)
                 .wrap(node_loc)
@@ -140,9 +220,16 @@ fn typecheck_expr(
         AstNode::BoolNot(_) => todo!(),
         AstNode::UnarySub(_) => todo!(),
         AstNode::UnaryAdd(_) => todo!(),
-        AstNode::Call(_, _) => todo!(),
-        AstNode::Let(lhs, ty, rhs) => cook_let(global, var_table, *lhs, ty.as_ref(), *rhs),
-        AstNode::Assign(_, _) => todo!(),
+        AstNode::Call(callee, args) => {
+            cook_call(global, var_table, expect_ty, *callee, &args, node_loc);
+        }
+        AstNode::Let(lhs, ty, rhs) => {
+            cook_let(global, var_table, *lhs, ty.as_ref(), *rhs);
+        }
+        &mut AstNode::Assign(lhs, rhs) => {
+            let expect_ty = cook_assign_lhs(global, var_table, lhs);
+            cook_expr(global, var_table, rhs, &expect_ty);
+        }
         AstNode::MathOpAssign(_, _, _) => todo!(),
         AstNode::BitOpAssign(_, _, _) => todo!(),
         AstNode::TakeRef(_) => todo!(),
@@ -163,7 +250,7 @@ fn typecheck_expr(
     }
 }
 
-fn typecheck_var(
+fn cook_var(
     global: &GlobalContext,
     var_table: &mut VarTable,
     loc: SourceLocation,
@@ -172,8 +259,7 @@ fn typecheck_var(
 ) {
     let var_ty = var_table.var_ty(var).unwrap();
     if !type_matches(global, var_ty, expect_ty) {
-        let var_name = var_table.var_name(var).unwrap();
-        ErrorContent::UndefinedVar(var_name)
+        ErrorContent::MismatchdTypes(expect_ty.clone(), var_ty.clone())
             .wrap(loc)
             .collect_into(&global.err_collector);
     }
@@ -186,8 +272,6 @@ fn make_typed_num(
     num_val: NumValue,
 ) -> AstNode {
     let ty = match expect_ty {
-        TypeExpr::_Numeric if num_val.is_int() => clif_types::I64,
-        TypeExpr::_Numeric if num_val.is_f() => clif_types::F64,
         TypeExpr::_Int | TypeExpr::_SInt => clif_types::I64,
         TypeExpr::USize | TypeExpr::ISize => clif_types::I64,
         TypeExpr::U64 | TypeExpr::I64 => clif_types::I64,
@@ -203,7 +287,7 @@ fn make_typed_num(
             NumValue::F(..) => clif_types::F64,
         },
         ty => {
-            ErrorContent::MismatchdTypes(TypeExpr::_Numeric, ty.clone())
+            ErrorContent::MismatchdTypes(ty.clone(), TypeExpr::__Numeric)
                 .wrap(loc)
                 .collect_into(&global.err_collector);
             return AstNode::TypedNumber(clif_types::INVALID, num_val);
@@ -218,12 +302,28 @@ fn cook_let(
     lhs: AstNodeRef,
     ty: Option<&TypeExpr>,
     rhs: Option<AstNodeRef>,
-) {
-    let ty = ty.expect("TODO: type infer");
+) -> Option<()> {
+    let infered_type: TypeExpr;
+    let ty = match ty {
+        Some(t) => t,
+        None => {
+            infered_type = infer_type(
+                global,
+                var_table,
+                rhs.ok_or(ErrorContent::LetNoTypeOrRHS.wrap(lhs.as_ref().src_loc()))
+                    .collect_err(&global.err_collector)?
+                    .as_ref()
+                    .inner(),
+            )
+            .unwrap_or(TypeExpr::_Unknown);
+            &infered_type
+        }
+    };
     cook_let_lhs(global, var_table, lhs, ty.clone());
     if let Some(rhs) = rhs {
-        typecheck_expr(global, var_table, rhs, ty);
+        cook_expr(global, var_table, rhs, ty);
     }
+    Some(())
 }
 
 fn cook_let_lhs(
@@ -237,11 +337,78 @@ fn cook_let_lhs(
     match node.inner_mut() {
         &mut AstNode::Identifier(name) => {
             let var = var_table.add_var(name, ty);
-            *node = AstNode::Variable(var).traced(loc);
+            *node.inner_mut() = AstNode::Variable(var);
         }
         AstNode::Tuple(_) => todo!(),
         _ => ErrorContent::InvalidLetLHS
             .wrap(loc)
             .collect_into(&global.err_collector),
     }
+}
+
+/// Returns the expected type for the rhs
+fn cook_assign_lhs(global: &GlobalContext, var_table: &VarTable, mut node: AstNodeRef) -> TypeExpr {
+    let node = node.as_mut();
+    let loc = node.src_loc();
+    match node.inner_mut() {
+        &mut AstNode::Identifier(name) => match var_table.var_id(name) {
+            Some(var) => {
+                let var_ty = var_table.var_ty(var).unwrap();
+                *node.inner_mut() = AstNode::Variable(var);
+                var_ty.clone()
+            }
+            None => {
+                ErrorContent::UndefinedVar(name)
+                    .wrap(loc)
+                    .collect_into(&global.err_collector);
+                TypeExpr::_Unknown
+            }
+        },
+        AstNode::Tuple(_) => todo!(),
+        _ => {
+            ErrorContent::InvalidAssignLHS
+                .wrap(loc)
+                .collect_into(&global.err_collector);
+            TypeExpr::_Unknown
+        }
+    }
+}
+
+fn cook_call(
+    global: &GlobalContext,
+    var_table: &mut VarTable,
+    expect_ty: &TypeExpr,
+    callee: AstNodeRef,
+    args: &[AstNodeRef],
+    loc: SourceLocation,
+) -> Option<()> {
+    let func_name = callee
+        .as_ref()
+        .inner()
+        .as_identifier()
+        .expect("TODO: Indirect function calling");
+    let func_info = global
+        .func(func_name)
+        .ok_or(ErrorContent::FuncNotExist(func_name).wrap(loc))
+        .collect_err(&global.err_collector)?;
+    if args.len() != func_info.args.len() {
+        ErrorContent::MismatchedArgsCount(Some(func_name), func_info.args.len(), args.len())
+            .wrap(loc)
+            .collect_into(&global.err_collector);
+        // still check if at least the provided arguments are valid expressions
+        for &arg in args.iter() {
+            cook_expr(global, var_table, arg, &TypeExpr::_Unknown);
+        }
+        return Some(());
+    }
+    for (i, &arg) in args.iter().enumerate() {
+        let expect_ty = unsafe { &func_info.sig.args.get_unchecked(i).1 };
+        cook_expr(global, var_table, arg, expect_ty);
+    }
+    if !type_matches(global, expect_ty, &func_info.sig.ret_type) {
+        ErrorContent::MismatchdTypes(expect_ty.clone(), func_info.sig.ret_type.clone())
+            .wrap(loc)
+            .collect_into(&global.err_collector);
+    }
+    Some(())
 }

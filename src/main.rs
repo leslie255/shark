@@ -40,7 +40,7 @@ fn main() {
     //let bytes = global_context.finish().emit().unwrap();
     //write_bytes_to_file("output.o", &bytes).unwrap();
 
-    //err_collector.print_and_dump_all(&buffers);
+    err_collector.print_and_dump_all(&buffers);
 }
 
 fn write_bytes_to_file(path: &str, buf: &[u8]) -> std::io::Result<()> {

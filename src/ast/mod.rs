@@ -9,8 +9,8 @@ use std::{
 
 use crate::{
     error::location::{IntoSourceLoc, Traced},
-    token::NumValue,
     gen::ClifType,
+    token::NumValue,
 };
 use type_expr::TypeExpr;
 
@@ -51,14 +51,6 @@ impl Ast {
     pub fn add_str(&mut self, str: String) -> usize {
         self.str_pool.push(str);
         self.str_pool.len() - 1
-    }
-}
-
-#[derive(Clone, Copy)]
-pub struct Variable(usize);
-impl Debug for Variable {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "var{}", self.0)
     }
 }
 
@@ -416,4 +408,22 @@ pub enum CmpKind {
     Le,
     GrEq,
     LeEq,
+}
+
+/// Only used in Cooked AST
+#[derive(Clone, Copy)]
+pub struct Variable(usize);
+impl Debug for Variable {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "var{}", self.0)
+    }
+}
+
+/// Only used in Cooked AST
+#[derive(Clone, Copy)]
+pub struct FuncRef(usize);
+impl Debug for FuncRef {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "fn{}", self.0)
+    }
 }

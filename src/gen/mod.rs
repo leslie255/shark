@@ -81,11 +81,11 @@ fn trans_ty(global: &GlobalContext, ty: &TypeExpr) -> FlatType {
         TypeExpr::Union => todo!(),
         TypeExpr::Enum => todo!(),
         TypeExpr::_Unknown => clif_types::INVALID.into(),
-        TypeExpr::_Numeric => clif_types::INVALID.into(),
         TypeExpr::_SInt => clif_types::INVALID.into(),
         TypeExpr::_Int => clif_types::INVALID.into(),
         TypeExpr::_Float => clif_types::INVALID.into(),
         TypeExpr::Never => FlatType::Empty,
+        TypeExpr::__Numeric => unreachable!(),
         TypeExpr::INVALID => unreachable!(),
     }
 }

@@ -43,10 +43,12 @@ pub enum TypeExpr {
 
     // Non-concrete types
     _Unknown,
-    _Numeric,
     _SInt,
     _Int,
     _Float,
+
+    /// Only used in error reporting
+    __Numeric,
 
     Never,
 }
@@ -88,7 +90,6 @@ impl TypeExpr {
             | TypeExpr::I8
             | TypeExpr::F64
             | TypeExpr::F32
-            | TypeExpr::_Numeric
             | TypeExpr::_SInt
             | TypeExpr::_Int
             | TypeExpr::_Float => true,
@@ -129,11 +130,7 @@ impl TypeExpr {
 
     pub fn is_concrete(&self) -> bool {
         match self {
-            TypeExpr::_Unknown
-            | TypeExpr::_Numeric
-            | TypeExpr::_SInt
-            | TypeExpr::_Int
-            | TypeExpr::_Float => false,
+            TypeExpr::_Unknown | TypeExpr::_SInt | TypeExpr::_Int | TypeExpr::_Float => false,
             _ => true,
         }
     }
@@ -226,11 +223,11 @@ impl Debug for TypeExpr {
             Self::Union => write!(f, "{{UNION}}")?,
             Self::Enum => write!(f, "{{ENUM}}")?,
             Self::_Unknown => write!(f, "{{unknown}}")?,
-            Self::_Numeric => write!(f, "{{numeric}}")?,
             Self::_SInt => write!(f, "{{signed integer}}")?,
             Self::_Int => write!(f, "{{integer}}")?,
             Self::_Float => write!(f, "{{float point number}}")?,
-            Self::Never => write!(f, "!never")?,
+            Self::Never => write!(f, "!")?,
+            Self::__Numeric => write!(f, "{{numeric}}")?,
         }
         Ok(())
     }
