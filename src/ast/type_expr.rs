@@ -41,14 +41,8 @@ pub enum TypeExpr {
     #[allow(dead_code)]
     Enum,
 
-    // Non-concrete types
+    _UnknownNumeric(NumericType),
     _Unknown,
-    _SInt,
-    _Int,
-    _Float,
-
-    /// Only used in error reporting
-    __Numeric,
 
     Never,
 }
@@ -74,7 +68,8 @@ impl TypeExpr {
         matches!(self, Self::Never)
     }
 
-    pub fn is_any_numeric(&self) -> bool {
+    /// Doesn't include `_UnknownNumeric`
+    pub fn is_numeric(&self) -> bool {
         match self {
             TypeExpr::USize
             | TypeExpr::ISize
@@ -89,10 +84,7 @@ impl TypeExpr {
             | TypeExpr::I16
             | TypeExpr::I8
             | TypeExpr::F64
-            | TypeExpr::F32
-            | TypeExpr::_SInt
-            | TypeExpr::_Int
-            | TypeExpr::_Float => true,
+            | TypeExpr::F32 => true,
             _ => false,
         }
     }
@@ -130,7 +122,7 @@ impl TypeExpr {
 
     pub fn is_concrete(&self) -> bool {
         match self {
-            TypeExpr::_Unknown | TypeExpr::_SInt | TypeExpr::_Int | TypeExpr::_Float => false,
+            TypeExpr::_Unknown => false,
             _ => true,
         }
     }
@@ -223,12 +215,39 @@ impl Debug for TypeExpr {
             Self::Union => write!(f, "{{UNION}}")?,
             Self::Enum => write!(f, "{{ENUM}}")?,
             Self::_Unknown => write!(f, "{{unknown}}")?,
-            Self::_SInt => write!(f, "{{signed integer}}")?,
-            Self::_Int => write!(f, "{{integer}}")?,
-            Self::_Float => write!(f, "{{float point number}}")?,
+            Self::_UnknownNumeric(num_ty) => num_ty.fmt(f)?,
             Self::Never => write!(f, "!")?,
-            Self::__Numeric => write!(f, "{{numeric}}")?,
         }
         Ok(())
+    }
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Default)]
+pub struct NumericType {
+    pub is_int: bool,
+    pub is_signed: bool,
+}
+impl Debug for NumericType {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        match (self.is_int, self.is_signed) {
+            (true, true) => write!(f, "{{signed integer}}"),
+            (true, false) => write!(f, "{{integer}}"),
+            (false, true) => write!(f, "{{signed numeric}}"),
+            (false, false) => write!(f, "{{numeric}}"),
+        }
+    }
+}
+impl NumericType {
+    pub fn int(self) -> Self {
+        Self {
+            is_int: true,
+            is_signed: self.is_signed,
+        }
+    }
+    pub fn signed(self) -> Self {
+        Self {
+            is_int: self.is_int,
+            is_signed: true,
+        }
     }
 }

@@ -227,6 +227,73 @@ impl Debug for Signature {
     }
 }
 
+/// Context inside a function
+#[derive(Clone)]
+pub struct LocalContext {
+    var_tables: Vec<VarTable>,
+    pub return_type: TypeExpr,
+}
+
+impl LocalContext {
+    pub fn new(return_type: TypeExpr) -> Self {
+        Self {
+            var_tables: vec![VarTable::default()],
+            return_type,
+        }
+    }
+
+    fn top_var_table(&self) -> &VarTable {
+        self.var_tables.last().expect("Variable stack is empty")
+    }
+
+    fn top_var_table_mut(&mut self) -> &mut VarTable {
+        self.var_tables.last_mut().expect("Variable stack is empty")
+    }
+
+    /// Get the variable ID from a name
+    pub fn var_id(&self, name: &str) -> Option<Variable> {
+        self.top_var_table()
+            .var_ids
+            .get(name)
+            .map(|&id| Variable(id))
+    }
+
+    /// Get the name of the variable from its ID
+    pub fn var_name(&self, id: Variable) -> Option<&'static str> {
+        self.top_var_table().vars.get(id.0).map(|(name, _)| *name)
+    }
+
+    /// Get the type of the variable from its ID
+    pub fn var_ty(&self, id: Variable) -> Option<&TypeExpr> {
+        self.top_var_table().vars.get(id.0).map(|(_, ty)| ty)
+    }
+
+    pub fn var_ty_mut(&mut self, id: Variable) -> Option<&mut TypeExpr> {
+        self.top_var_table_mut()
+            .vars
+            .get_mut(id.0)
+            .map(|(_, ty)| ty)
+    }
+
+    pub fn add_var(&mut self, name: &'static str, ty: TypeExpr) -> Variable {
+        let var_table = self.top_var_table_mut();
+        let id = var_table.vars.len();
+        var_table.var_ids.insert(name, id);
+        var_table.vars.push((name, ty));
+        Variable(id)
+    }
+
+    pub fn enters_block(&mut self) {
+        self.var_tables.push(VarTable::default());
+    }
+
+    pub fn leaves_block(&mut self) {
+        self.var_tables
+            .pop()
+            .expect("Var table is empty when LocalContext::leaves_block is called");
+    }
+}
+
 #[derive(Clone, Default)]
 pub struct VarTable {
     pub vars: Vec<(&'static str, TypeExpr)>,
@@ -265,16 +332,17 @@ pub struct Function {
     pub name: &'static str,
     pub sign: Signature,
     pub body: Option<Vec<AstNodeRef>>,
-    pub var_table: VarTable,
+    pub local_ctx: LocalContext,
 }
 
 impl Function {
     pub fn new(name: &'static str, sign: Signature, body: Option<Vec<AstNodeRef>>) -> Self {
+        let return_type = sign.ret_type.clone();
         Self {
             name,
             sign,
             body,
-            var_table: VarTable::default(),
+            local_ctx: LocalContext::new(return_type),
         }
     }
 }
@@ -307,11 +375,10 @@ impl Debug for Function {
         f.pad("vars:")?;
         f.debug_map()
             .entries(
-                self.var_table
-                    .vars
+                self.local_ctx
+                    .var_tables
                     .iter()
-                    .enumerate()
-                    .map(|(i, x)| (Variable(i), x)),
+                    .flat_map(|x| x.vars.iter().enumerate().map(|(i, x)| (Variable(i), x))),
             )
             .finish()?;
         Ok(())
@@ -411,19 +478,10 @@ pub enum CmpKind {
 }
 
 /// Only used in Cooked AST
-#[derive(Clone, Copy)]
-pub struct Variable(usize);
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub struct Variable(pub usize);
 impl Debug for Variable {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "var{}", self.0)
-    }
-}
-
-/// Only used in Cooked AST
-#[derive(Clone, Copy)]
-pub struct FuncRef(usize);
-impl Debug for FuncRef {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "fn{}", self.0)
     }
 }
