@@ -238,13 +238,13 @@ impl Debug for NumericType {
     }
 }
 impl NumericType {
-    pub fn int(self) -> Self {
+    pub const fn int(self) -> Self {
         Self {
             is_int: true,
             is_signed: self.is_signed,
         }
     }
-    pub fn signed(self) -> Self {
+    pub const fn signed(self) -> Self {
         Self {
             is_int: self.is_int,
             is_signed: true,

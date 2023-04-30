@@ -582,12 +582,14 @@ impl AstParser {
         let node_loc = (self.path, start_loc, end_loc);
 
         match (&var_type, &rhs) {
-            (None, None) => ErrorContent::LetNoTypeOrRHS
-                .wrap(node_loc)
-                .collect_into(&self.err_collector),
-            _ => (),
+            (None, None) => {
+                ErrorContent::LetNoTypeOrRHS
+                    .wrap(node_loc)
+                    .collect_into(&self.err_collector);
+                None
+            }
+            _ => Some(AstNode::Let(lhs_node, var_type, rhs).traced(node_loc)),
         }
-        Some(AstNode::Let(lhs_node, var_type, rhs).traced(node_loc))
     }
 
     /// Parse arguments in a function call, starting from the `(`

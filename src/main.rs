@@ -1,4 +1,5 @@
 #![feature(string_leak)]
+#![feature(never_type)]
 #![feature(iter_collect_into)]
 #![allow(dead_code)]
 

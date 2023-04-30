@@ -52,11 +52,7 @@ impl<T: IsZeroOrOne> Display for MaybePlural<T> {
 
 /// Formats to "s" if the given number is plural, otherwise formats to ""
 fn add_s_if_plural(n: impl IsZeroOrOne) -> impl Display {
-    MaybePlural {
-        n,
-        s: "",
-        p: "s",
-    }
+    MaybePlural { n, s: "", p: "s" }
 }
 
 /// Formats to "are" if the given number is plural, otherwise formats to "is"
@@ -236,8 +232,12 @@ impl ErrorContent {
                 )
             }
             Self::UnreachableExpr => "Code following this expression are not reachable".to_string(),
-            Self::InvalidLetLHS => "Only variable or tuple of variables is allowed as LHS of `let`".to_string(),
-            Self::InvalidAssignLHS => "Only variable or tuple of variables is allowed as LHS of assignment".to_string(),
+            Self::InvalidLetLHS => {
+                "Only variable or tuple of variables is allowed as LHS of `let`".to_string()
+            }
+            Self::InvalidAssignLHS => {
+                "Only variable or tuple of variables is allowed as LHS of assignment".to_string()
+            }
         }
     }
 }
