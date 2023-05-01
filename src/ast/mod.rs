@@ -228,7 +228,7 @@ impl Debug for Signature {
 }
 
 /// Context inside a function
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct LocalContext {
     var_tables: Vec<VarTable>,
     pub return_type: TypeExpr,
@@ -294,7 +294,7 @@ impl LocalContext {
     }
 }
 
-#[derive(Clone, Default)]
+#[derive(Clone, Default, Debug)]
 pub struct VarTable {
     pub vars: Vec<(&'static str, TypeExpr)>,
     pub var_ids: HashMap<&'static str, usize>,

@@ -21,7 +21,7 @@ pub fn type_matches(global: &GlobalContext, expect: &TypeExpr, found: &TypeExpr)
         (TypeName(..), TypeName(..)) => todo!(),
         (TypeName(..), _) => todo!(),
         (_, TypeName(..)) => todo!(),
-        (_, Never) | (_, _Unknown) => true,
+        (_, Never) | (_Unknown, _) | (_, _Unknown) => true,
         (USize, USize)
         | (ISize, ISize)
         | (U128, U128)
@@ -77,7 +77,7 @@ pub fn type_matches(global: &GlobalContext, expect: &TypeExpr, found: &TypeExpr)
             if expect.is_int && !found.is_int {
                 return false;
             }
-            if expect.is_signed && !found.is_signed {
+            if !expect.is_signed && found.is_signed {
                 return false;
             }
             true
@@ -286,7 +286,23 @@ fn cook_expr<'l, 'g: 'l>(
                 None
             }
             Some(t) if t.is_numeric() || matches!(t, TypeExpr::_UnknownNumeric(..)) => {
-                cook_expr(global, local, node, expect_ty)
+                let mut ty =
+                    cook_expr(global, local, node, &t).unwrap_or(Cow::Owned(TypeExpr::_Unknown));
+                match ty.as_ref() {
+                    &TypeExpr::_UnknownNumeric(num_ty) => {
+                        ty = Cow::Owned(TypeExpr::_UnknownNumeric(num_ty.signed()));
+                    }
+                    _ => (),
+                }
+                if !type_matches(global, expect_ty, ty.as_ref()) {
+                    ErrorContent::MismatchdTypes(
+                        TypeExpr::_UnknownNumeric(NumericType::default().signed()),
+                        t.clone(),
+                    )
+                    .wrap(node.as_ref().src_loc())
+                    .collect_into(&global.err_collector);
+                }
+                Some(ty)
             }
             Some(t) => {
                 ErrorContent::MismatchdTypes(
@@ -313,8 +329,8 @@ fn cook_expr<'l, 'g: 'l>(
         }
         AstNode::Let(lhs, ty, rhs) => cook_let(global, local, *lhs, ty.as_ref(), *rhs),
         &mut AstNode::Assign(lhs, rhs) => {
-            let expect_ty = cook_assign_lhs(global, local, lhs);
-            cook_expr(global, local, rhs, &expect_ty)
+            cook_assign(global, local, lhs, rhs);
+            Some(Cow::Owned(TypeExpr::void()))
         }
         AstNode::MathOpAssign(_, _, _) => todo!(),
         AstNode::BitOpAssign(_, _, _) => todo!(),
@@ -397,8 +413,26 @@ fn cook_num<'l>(
         TypeExpr::I8 => (TypeExpr::I8, clif_types::I8),
         TypeExpr::F64 => (TypeExpr::F64, clif_types::F64),
         TypeExpr::F32 => (TypeExpr::F32, clif_types::F32),
-        TypeExpr::_UnknownNumeric(..) | TypeExpr::_Unknown => {
-            return None;
+        expect_ty @ &TypeExpr::_UnknownNumeric(num_ty) => {
+            let ty = match (num_ty.is_int, num_ty.is_signed, num_val) {
+                //  int?   signed? provided
+                (true, true, NumValue::U(..)) => todo!(),
+                (true, true, NumValue::I(..)) => expect_ty.clone(),
+                (true, true, NumValue::F(..)) => todo!(),
+                (true, false, NumValue::U(..)) => expect_ty.clone(),
+                (true, false, NumValue::I(..)) => expect_ty.clone(),
+                (true, false, NumValue::F(..)) => todo!(),
+                (false, ..) => todo!(),
+            };
+            return Some(ty);
+        }
+        TypeExpr::_Unknown => {
+            let ty = match num_val {
+                NumValue::U(..) => TypeExpr::_UnknownNumeric(NumericType::default().int()),
+                NumValue::I(..) => TypeExpr::_UnknownNumeric(NumericType::default().int().signed()),
+                NumValue::F(..) => TypeExpr::_UnknownNumeric(NumericType::default()),
+            };
+            return Some(ty);
         }
         ty => {
             ErrorContent::MismatchdTypes(
@@ -422,27 +456,31 @@ fn cook_let<'l, 'g: 'l>(
     ty: Option<&TypeExpr>,
     rhs: Option<AstNodeRef>,
 ) -> Option<Cow<'l, TypeExpr>> {
-    let infered_type: TypeExpr;
-    let ty = match ty {
-        Some(t) => t,
-        None => {
-            infered_type = infer_type(
-                global,
-                local,
-                rhs.ok_or(ErrorContent::LetNoTypeOrRHS.wrap(lhs.as_ref().src_loc()))
-                    .collect_err(&global.err_collector)?
-                    .as_ref()
-                    .inner(),
-            )
-            .unwrap_or(TypeExpr::_Unknown);
-            &infered_type
+    let ty = match (ty, rhs) {
+        (None, None) => {
+            ErrorContent::LetNoTypeOrRHS
+                .wrap(lhs.as_ref().src_loc())
+                .collect_into(&global.err_collector);
+            return Some(Cow::Owned(TypeExpr::_Unknown));
+        }
+        (None, Some(rhs)) => match cook_expr(global, local, rhs, &TypeExpr::_Unknown) {
+            Some(ty) => ty.into_owned(),
+            None => todo!(),
+        },
+        (Some(ty), None) => ty.clone(),
+        (Some(ty), Some(rhs)) => {
+            let rhs_ty = cook_expr(global, local, rhs, &TypeExpr::_Unknown)?;
+            if !type_matches(global, ty, &rhs_ty) {
+                ErrorContent::MismatchdTypes(ty.clone(), Cow::into_owned(rhs_ty))
+                    .wrap(rhs.as_ref().src_loc())
+                    .collect_into(&global.err_collector);
+                return None;
+            }
+            ty.clone()
         }
     };
-    let ty = cook_let_lhs(global, local, lhs, ty.clone())?;
-    if let Some(rhs) = rhs {
-        cook_expr(global, local, rhs, &ty);
-    }
-    Some(ty)
+    cook_let_lhs(global, local, lhs, ty);
+    Some(Cow::Owned(TypeExpr::void()))
 }
 
 fn cook_let_lhs<'l, 'g: 'l>(
@@ -450,30 +488,30 @@ fn cook_let_lhs<'l, 'g: 'l>(
     local: &mut LocalContext,
     mut node: AstNodeRef,
     ty: TypeExpr,
-) -> Option<Cow<'l, TypeExpr>> {
+) {
     let node = node.as_mut();
     let loc = node.src_loc();
     match node.inner_mut() {
         &mut AstNode::Identifier(name) => {
             let var = local.add_var(name, ty);
             *node.inner_mut() = AstNode::Variable(var);
-            Some(Cow::Owned(TypeExpr::_Unknown))
         }
         AstNode::Tuple(_) => todo!(),
-        _ => {
-            ErrorContent::InvalidLetLHS
-                .wrap(loc)
-                .collect_into(&global.err_collector);
-            None
-        }
+        _ => ErrorContent::InvalidLetLHS
+            .wrap(loc)
+            .collect_into(&global.err_collector),
     }
 }
 
-/// Returns the expected type for the rhs
-fn cook_assign_lhs(global: &GlobalContext, local: &LocalContext, mut node: AstNodeRef) -> TypeExpr {
-    let node = node.as_mut();
+fn cook_assign(
+    global: &GlobalContext,
+    local: &mut LocalContext,
+    mut lhs: AstNodeRef,
+    rhs: AstNodeRef,
+) {
+    let node = lhs.as_mut();
     let loc = node.src_loc();
-    match node.inner_mut() {
+    let expect_ty = match node.inner_mut() {
         &mut AstNode::Identifier(name) => match local.var_id(name) {
             Some(var) => {
                 let var_ty = local.var_ty(var).unwrap();
@@ -494,7 +532,9 @@ fn cook_assign_lhs(global: &GlobalContext, local: &LocalContext, mut node: AstNo
                 .collect_into(&global.err_collector);
             TypeExpr::_Unknown
         }
-    }
+    };
+    dbg!(&expect_ty);
+    cook_expr(global, local, rhs, &expect_ty);
 }
 
 fn cook_call<'l, 'g: 'l>(
