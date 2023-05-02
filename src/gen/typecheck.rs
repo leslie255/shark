@@ -12,7 +12,7 @@ use crate::{
     token::NumValue,
 };
 
-use super::{clif_types, ClifType, GlobalContext};
+use super::{clif_types, trans_ty, ClifType, GlobalContext};
 
 #[must_use]
 pub fn type_matches(global: &GlobalContext, expect: &TypeExpr, found: &TypeExpr) -> bool {
@@ -103,82 +103,6 @@ pub fn type_matches(global: &GlobalContext, expect: &TypeExpr, found: &TypeExpr)
             (false, false) => expect.is_f(),
         },
         _ => false,
-    }
-}
-
-/// Infer a type from an **uncooked** AST node
-fn infer_type(global: &GlobalContext, local: &LocalContext, node: &AstNode) -> Option<TypeExpr> {
-    match node {
-        &AstNode::Identifier(name) => local
-            .var_id(name)
-            .and_then(|var| local.var_ty(var).cloned()),
-        AstNode::Number(NumValue::U(..)) => Some(TypeExpr::_UnknownNumeric(NumericType {
-            is_int: true,
-            is_signed: false,
-        })),
-        AstNode::Number(NumValue::I(..)) => Some(TypeExpr::_UnknownNumeric(NumericType {
-            is_int: true,
-            is_signed: true,
-        })),
-        AstNode::Number(NumValue::F(..)) => Some(TypeExpr::_UnknownNumeric(NumericType {
-            is_int: false,
-            is_signed: true,
-        })),
-        AstNode::String(_) => todo!("string literals"),
-        AstNode::Char(..) => Some(TypeExpr::Char),
-        AstNode::Bool(..) => Some(TypeExpr::Bool),
-        AstNode::Array(elements) => match elements.as_slice() {
-            [] => Some(TypeExpr::Array(0, Box::new(TypeExpr::void()))),
-            elements => infer_type(
-                global,
-                local,
-                unsafe { elements.get_unchecked(0) }.as_ref().inner(),
-            ),
-        },
-        AstNode::MathOp(_, lhs, _) | AstNode::BitOp(_, lhs, _) => {
-            infer_type(global, local, lhs.as_ref().inner())
-        }
-        AstNode::BoolOp(..) | AstNode::Cmp(..) | AstNode::BoolNot(..) => Some(TypeExpr::Bool),
-        AstNode::MemberAccess(_, _) => todo!(),
-        AstNode::BitNot(n) | AstNode::UnaryAdd(n) => infer_type(global, local, n.as_ref().inner()),
-        AstNode::UnarySub(n) => match infer_type(global, local, n.as_ref().inner()) {
-            Some(TypeExpr::_UnknownNumeric(num_ty)) => {
-                Some(TypeExpr::_UnknownNumeric(num_ty.signed()))
-            }
-            Some(t) if t.is_i() || t.is_f() => Some(t),
-            Some(_) | None => None,
-        },
-        AstNode::Call(callee, _) => match callee.as_ref().inner() {
-            &AstNode::Identifier(name) => global.func(name).map(|info| info.sig.ret_type.clone()),
-            _ => todo!("Indirect function calling"),
-        },
-        AstNode::TakeRef(node) => {
-            let inner = infer_type(global, local, node.as_ref().inner())?;
-            Some(TypeExpr::Ref(Box::new(inner)))
-        }
-        AstNode::Deref(node) => match infer_type(global, local, node.as_ref().inner())? {
-            TypeExpr::Ref(t) | TypeExpr::Ptr(t) => Some(t.as_ref().clone()),
-            _ => None,
-        },
-        AstNode::Block(_) => todo!("type infer for block"),
-        AstNode::If(_) => todo!("type infer for if"),
-        AstNode::Loop(_) => todo!("type infer for loop"),
-        AstNode::Return(..) | AstNode::Break | AstNode::Continue => Some(TypeExpr::Never),
-        AstNode::Typecast(_, ty) => Some(ty.clone()),
-        AstNode::Tuple(_) => todo!("type infer for tuple"),
-        AstNode::Let(..)
-        | AstNode::Assign(..)
-        | AstNode::MathOpAssign(..)
-        | AstNode::BitOpAssign(..)
-        | AstNode::TypeDef(_, _)
-        | AstNode::StructDef(_)
-        | AstNode::UnionDef(_)
-        | AstNode::EnumDef(_)
-        | AstNode::FnDef(_) => None,
-        // tail is handled specially outside
-        AstNode::Tail(_) => unreachable!(),
-        // only appears in cooked AST
-        AstNode::TypedNumber(..) | AstNode::Variable(..) => unreachable!(),
     }
 }
 
@@ -275,54 +199,9 @@ fn cook_expr<'l, 'g: 'l>(
         AstNode::MemberAccess(_, _) => todo!(),
         AstNode::BitNot(_) => todo!(),
         AstNode::BoolNot(_) => todo!(),
-        &mut AstNode::UnarySub(node) => match infer_type(global, local, node.as_ref().inner()) {
-            Some(t) if t.is_u() => {
-                ErrorContent::MismatchdTypes(
-                    TypeExpr::_UnknownNumeric(NumericType::default().int().signed()),
-                    t.clone(),
-                )
-                .wrap(node.as_ref().src_loc())
-                .collect_into(&global.err_collector);
-                None
-            }
-            Some(t) if t.is_numeric() || matches!(t, TypeExpr::_UnknownNumeric(..)) => {
-                let mut ty =
-                    cook_expr(global, local, node, &t).unwrap_or(Cow::Owned(TypeExpr::_Unknown));
-                match ty.as_ref() {
-                    &TypeExpr::_UnknownNumeric(num_ty) => {
-                        ty = Cow::Owned(TypeExpr::_UnknownNumeric(num_ty.signed()));
-                    }
-                    _ => (),
-                }
-                if !type_matches(global, expect_ty, ty.as_ref()) {
-                    ErrorContent::MismatchdTypes(
-                        TypeExpr::_UnknownNumeric(NumericType::default().signed()),
-                        t.clone(),
-                    )
-                    .wrap(node.as_ref().src_loc())
-                    .collect_into(&global.err_collector);
-                }
-                Some(ty)
-            }
-            Some(t) => {
-                ErrorContent::MismatchdTypes(
-                    TypeExpr::_UnknownNumeric(NumericType::default()),
-                    t.clone(),
-                )
-                .wrap(node.as_ref().src_loc())
-                .collect_into(&global.err_collector);
-                None
-            }
-            None => {
-                ErrorContent::MismatchdTypes(
-                    TypeExpr::_UnknownNumeric(NumericType::default()),
-                    TypeExpr::_Unknown,
-                )
-                .wrap(node.as_ref().src_loc())
-                .collect_into(&global.err_collector);
-                None
-            }
-        },
+        &mut AstNode::UnarySub(child) => {
+            cook_unary_sub(global, local, node, child, expect_ty).map(|x| Cow::Owned(x))
+        }
         AstNode::UnaryAdd(_) => todo!(),
         AstNode::Call(callee, args) => {
             cook_call(global, local, expect_ty, *callee, &args, node_loc)
@@ -367,27 +246,12 @@ fn cook_var(
         ErrorContent::MismatchdTypes(expect_ty.clone(), var_ty.clone())
             .wrap(loc)
             .collect_into(&global.err_collector);
+        return;
     }
     // try to collapse the variable to a concrete type if needed
     match var_ty {
         TypeExpr::_Unknown | TypeExpr::_UnknownNumeric(..) => {
             *local.var_ty_mut(var).unwrap() = expect_ty.clone()
-        }
-        _ => (),
-    }
-}
-
-/// If a variable is of unconcrete type, try to collase it, provided that the type already matches
-fn try_collapse_var_ty(local: &mut LocalContext, node: &AstNode, expect_ty: &TypeExpr) {
-    match node {
-        &AstNode::Variable(var) => {
-            let var_ty = local.var_ty(var).unwrap();
-            match var_ty {
-                TypeExpr::_Unknown | TypeExpr::_UnknownNumeric(..) => {
-                    *local.var_ty_mut(var).unwrap() = expect_ty.clone()
-                }
-                _ => (),
-            }
         }
         _ => (),
     }
@@ -456,30 +320,31 @@ fn cook_let<'l, 'g: 'l>(
     ty: Option<&TypeExpr>,
     rhs: Option<AstNodeRef>,
 ) -> Option<Cow<'l, TypeExpr>> {
-    let ty = match (ty, rhs) {
+    let var_ty = match (ty, rhs) {
         (None, None) => {
             ErrorContent::LetNoTypeOrRHS
                 .wrap(lhs.as_ref().src_loc())
                 .collect_into(&global.err_collector);
-            return Some(Cow::Owned(TypeExpr::_Unknown));
+            TypeExpr::_Unknown
         }
-        (None, Some(rhs)) => match cook_expr(global, local, rhs, &TypeExpr::_Unknown) {
-            Some(ty) => ty.into_owned(),
-            None => todo!(),
-        },
+        (None, Some(rhs)) => {
+            let x = cook_expr(global, local, rhs, &TypeExpr::_Unknown);
+            dbg!(&x);
+            x.map_or(TypeExpr::_Unknown, Cow::into_owned)
+        }
         (Some(ty), None) => ty.clone(),
         (Some(ty), Some(rhs)) => {
-            let rhs_ty = cook_expr(global, local, rhs, &TypeExpr::_Unknown)?;
+            let rhs_ty =
+                cook_expr(global, local, rhs, ty).unwrap_or(Cow::Owned(TypeExpr::_Unknown));
             if !type_matches(global, ty, &rhs_ty) {
                 ErrorContent::MismatchdTypes(ty.clone(), Cow::into_owned(rhs_ty))
                     .wrap(rhs.as_ref().src_loc())
                     .collect_into(&global.err_collector);
-                return None;
             }
             ty.clone()
         }
     };
-    cook_let_lhs(global, local, lhs, ty);
+    cook_let_lhs(global, local, lhs, var_ty);
     Some(Cow::Owned(TypeExpr::void()))
 }
 
@@ -583,4 +448,65 @@ fn cook_return<'l>(
 ) -> Option<Cow<'l, TypeExpr>> {
     cook_expr(global, local, node, &local.return_type.clone());
     Some(Cow::Owned(TypeExpr::Never))
+}
+
+fn cook_unary_sub(
+    global: &GlobalContext,
+    local: &mut LocalContext,
+    node: &mut AstNode,
+    child: AstNodeRef,
+    expect_ty: &TypeExpr,
+) -> Option<TypeExpr> {
+    // If the expected type is unsigned or isn't numeric
+    if !expect_ty.is_i()
+        && !expect_ty.is_f()
+        && !expect_ty.is_unknown_signed_numeric()
+        && !expect_ty.is_unknown()
+    {
+        ErrorContent::MismatchdTypes(
+            expect_ty.clone(),
+            TypeExpr::_UnknownNumeric(NumericType::default().signed()),
+        )
+        .wrap(child.as_ref().src_loc())
+        .collect_into(&global.err_collector);
+        return None;
+    }
+    let ty = cook_expr(global, local, child, expect_ty).unwrap_or(Cow::Owned(TypeExpr::_Unknown));
+    // if the child node is a number literal, flatten this unary sub to one number literal, otherwise check the type
+    match child.as_ref().inner() {
+        &AstNode::Number(num_val) => {
+            dbg!();
+            *node = AstNode::Number(negate_num_val(num_val));
+        }
+        &AstNode::TypedNumber(ty, num_val) => {
+            dbg!();
+            *node = AstNode::TypedNumber(ty, negate_num_val(num_val));
+        }
+        _ => {
+            let expect_ty = match expect_ty {
+                TypeExpr::_UnknownNumeric(num_ty) => TypeExpr::_UnknownNumeric(num_ty.signed()),
+                TypeExpr::_Unknown => TypeExpr::_UnknownNumeric(NumericType::new().signed()),
+                ty => ty.clone(),
+            };
+            if !type_matches(global, &expect_ty, &ty) {
+                ErrorContent::MismatchdTypes(expect_ty.clone(), ty.into_owned())
+                    .wrap(child.as_ref().src_loc())
+                    .collect_into(&global.err_collector);
+                return None;
+            }
+        }
+    }
+    let ty = match ty.into_owned() {
+        TypeExpr::_UnknownNumeric(num_ty) => TypeExpr::_UnknownNumeric(num_ty.signed()),
+        ty => ty,
+    };
+    Some(ty)
+}
+
+fn negate_num_val(num_val: NumValue) -> NumValue {
+    match num_val {
+        NumValue::U(u) => NumValue::I(-(u as i64)),
+        NumValue::I(i) => NumValue::I(-i),
+        NumValue::F(f) => NumValue::F(-f),
+    }
 }

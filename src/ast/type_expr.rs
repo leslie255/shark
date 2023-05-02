@@ -126,6 +126,30 @@ impl TypeExpr {
             _ => true,
         }
     }
+
+    /// Returns `true` if the type expr is [`_UnknownNumeric`].
+    ///
+    /// [`_UnknownNumeric`]: TypeExpr::_UnknownNumeric
+    #[must_use]
+    pub const fn is_unknown_numeric(&self) -> bool {
+        matches!(self, Self::_UnknownNumeric(..))
+    }
+
+    /// Returns `true` if the type expr is [`_UnknownNumeric`] and is signed.
+    ///
+    /// [`_UnknownNumeric`]: TypeExpr::_UnknownNumeric
+    #[must_use]
+    pub const fn is_unknown_signed_numeric(&self) -> bool {
+        matches!(self, Self::_UnknownNumeric(num_ty) if num_ty.is_signed)
+    }
+
+    /// Returns `true` if the type expr is [`_Unknown`].
+    ///
+    /// [`_Unknown`]: TypeExpr::_Unknown
+    #[must_use]
+    pub fn is_unknown(&self) -> bool {
+        matches!(self, Self::_Unknown)
+    }
 }
 
 impl Debug for TypeExpr {
@@ -238,6 +262,12 @@ impl Debug for NumericType {
     }
 }
 impl NumericType {
+    pub const fn new() -> Self {
+        Self {
+            is_int: false,
+            is_signed: false,
+        }
+    }
     pub const fn int(self) -> Self {
         Self {
             is_int: true,
