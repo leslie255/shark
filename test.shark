@@ -1,4 +1,6 @@
 fn main() -> i32 {
-    let c = 'a';
-    let d: bool = c + c;
+    let a: i32 = 255;
+    let b = 255;
+    let c = a + b;
+    c
 }

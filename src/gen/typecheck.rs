@@ -185,8 +185,8 @@ fn cook_expr<'l, 'g: 'l>(
             }
         }
         AstNode::Array(_) => todo!(),
-        &mut AstNode::MathOp(_, lhs, rhs) => cook_math_op(global, local, expect_ty, lhs, rhs),
-        &mut AstNode::BitOp(_, lhs, rhs) => cook_bit_op(global, local, expect_ty, lhs, rhs),
+        &mut AstNode::MathOp(_, lhs, rhs) => cook_numeric_op(global, local, expect_ty, lhs, rhs),
+        &mut AstNode::BitOp(_, lhs, rhs) => cook_numeric_op(global, local, expect_ty, lhs, rhs),
         &mut AstNode::BoolOp(_, lhs, rhs) => cook_bool_op(global, local, expect_ty, lhs, rhs),
         &mut AstNode::Cmp(_, lhs, rhs) => cook_cmp(global, local, expect_ty, lhs, rhs),
         AstNode::MemberAccess(_, _) => todo!(),
@@ -247,6 +247,19 @@ fn cook_var<'l, 'g: 'l>(
         *var_ty = expect_ty.clone();
     }
     Some(Cow::Borrowed(var_ty))
+}
+
+/// Try to collapse the variable to a concrete type if needed, assumes type of variable matches `expect_ty`
+fn try_collapse_var_ty<'l>(local: &'l mut LocalContext, node: AstNodeRef, expect_ty: &TypeExpr) {
+    match node.as_ref().inner() {
+        &AstNode::Variable(var) => {
+            let var_ty = local.var_ty_mut(var).unwrap();
+            if var_ty.is_unknown() || var_ty.is_unknown_numeric() && !expect_ty.is_unknown() {
+                *var_ty = expect_ty.clone();
+            }
+        }
+        _ => (),
+    }
 }
 
 fn cook_num<'l>(
@@ -500,7 +513,7 @@ fn negate_num_val(num_val: NumValue) -> NumValue {
     }
 }
 
-fn cook_math_op<'l, 'g: 'l>(
+fn cook_numeric_op<'l, 'g: 'l>(
     global: &'g GlobalContext,
     local: &'l mut LocalContext,
     expect_ty: &TypeExpr,
@@ -523,53 +536,17 @@ fn cook_math_op<'l, 'g: 'l>(
     let lhs_ty = cook_expr(global, local, lhs, expect_ty)
         .map(Cow::into_owned)
         .unwrap_or(TypeExpr::_Unknown);
-    let rhs_ty = cook_expr(global, local, rhs, expect_ty).unwrap_or(Cow::Owned(TypeExpr::_Unknown));
-    if !type_matches(global, &lhs_ty, &rhs_ty) {
-        ErrorContent::MismatchdTypes(lhs_ty, rhs_ty.into_owned())
-            .wrap(rhs.as_ref().src_loc())
-            .collect_into(&global.err_collector);
-        None
-    } else if !type_matches(global, &rhs_ty, &lhs_ty) {
-        ErrorContent::MismatchdTypes(rhs_ty.into_owned(), lhs_ty)
-            .wrap(lhs.as_ref().src_loc())
-            .collect_into(&global.err_collector);
-        None
-    } else {
-        Some(Cow::Owned(lhs_ty))
-    }
-}
-
-fn cook_bit_op<'l, 'g: 'l>(
-    global: &'g GlobalContext,
-    local: &'l mut LocalContext,
-    expect_ty: &TypeExpr,
-    lhs: AstNodeRef,
-    rhs: AstNodeRef,
-) -> Option<Cow<'l, TypeExpr>> {
-    let expect_ty = match expect_ty {
-        t if t.is_numeric() || t.is_unknown_numeric() => t,
-        TypeExpr::_Unknown => &ANY_NUMERIC,
-        _ => {
-            ErrorContent::MismatchdTypes(
-                expect_ty.clone(),
-                TypeExpr::_UnknownNumeric(NumericType::default()),
-            )
-            .wrap(lhs.as_ref().src_loc().join(rhs.as_ref().src_loc()))
-            .collect_into(&global.err_collector);
-            &ANY_NUMERIC
-        }
-    };
-    let lhs_ty = cook_expr(global, local, lhs, expect_ty)
+    let rhs_ty = cook_expr(global, local, rhs, &lhs_ty)
         .map(Cow::into_owned)
         .unwrap_or(TypeExpr::_Unknown);
-    let rhs_ty = cook_expr(global, local, rhs, expect_ty).unwrap_or(Cow::Owned(TypeExpr::_Unknown));
+    try_collapse_var_ty(local, lhs, &rhs_ty);
     if !type_matches(global, &lhs_ty, &rhs_ty) {
-        ErrorContent::MismatchdTypes(lhs_ty, rhs_ty.into_owned())
+        ErrorContent::MismatchdTypes(lhs_ty, rhs_ty)
             .wrap(rhs.as_ref().src_loc())
             .collect_into(&global.err_collector);
         None
     } else if !type_matches(global, &rhs_ty, &lhs_ty) {
-        ErrorContent::MismatchdTypes(rhs_ty.into_owned(), lhs_ty)
+        ErrorContent::MismatchdTypes(rhs_ty, lhs_ty)
             .wrap(lhs.as_ref().src_loc())
             .collect_into(&global.err_collector);
         None
