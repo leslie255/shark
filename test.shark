@@ -2,7 +2,7 @@ fn f() -> &i32 {
 }
 
 fn main() {
-    let x = f();
-    *x = 10;
+    let x: i32 = 10;
+    let y = & &x;
     return;
 }

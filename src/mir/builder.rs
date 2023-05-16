@@ -293,8 +293,8 @@ impl<'g> MirFuncBuilder<'g> {
 
     /// Deduce the type of a `Value`, returns `None` if there is a type error (does not report the
     /// type error)
-    fn deduce_val_ty<'a>(&'a self, rval: &'a Value) -> Option<Cow<'a, TypeExpr>> {
-        match rval {
+    fn deduce_val_ty<'a>(&'a self, val: &'a Value) -> Option<Cow<'a, TypeExpr>> {
+        match val {
             Value::Number(ty, _) => Some(Cow::Borrowed(ty)),
             Value::Bool(..) => Some(Cow::Owned(TypeExpr::Bool)),
             Value::Char(..) => Some(Cow::Owned(TypeExpr::Char)),
@@ -311,7 +311,24 @@ impl<'g> MirFuncBuilder<'g> {
     /// Deduce the type of a `Place`, returns `None` if there is a type error (does not report the
     /// type error)
     fn deduce_place_ty<'a>(&'a self, place: &Place) -> Option<Cow<'a, TypeExpr>> {
-        Some(Cow::Borrowed(&self.function.vars[place.local].ty))
+        let base_ty = &self.function.vars[place.local].ty;
+        match place.projections.as_slice() {
+            [] => Some(Cow::Borrowed(base_ty)),
+            projections => {
+                let mut ty = base_ty.clone();
+                for proj in projections {
+                    ty = match proj {
+                        ProjectionEle::Deref => match ty {
+                            TypeExpr::Ref(ty) => *ty,
+                            _ => return None,
+                        },
+                        ProjectionEle::Index(_) => todo!(),
+                        ProjectionEle::Field(_) => todo!(),
+                    }
+                }
+                Some(Cow::Owned(ty))
+            }
+        }
     }
 
     /// Creates a unnamed, immutable variable, with a given type
@@ -348,8 +365,18 @@ impl<'g> MirFuncBuilder<'g> {
             .copied()
     }
 
-    fn convert_ref(&mut self, _node: &Traced<AstNode>) -> Option<Value> {
-        todo!()
+    fn convert_ref(&mut self, node: &Traced<AstNode>) -> Option<Value> {
+        let val = self.convert_expr(node)?;
+        match val {
+            Value::Copy(place) => Some(Value::Ref(place)),
+            val => {
+                let ty = self.deduce_val_ty(&val).unwrap().into_owned();
+                let temp_var = self.make_temp_var(ty);
+                let temp_var_place = Place::no_projection(temp_var);
+                self.add_stmt(Statement::Assign(temp_var_place.clone(), val));
+                Some(Value::Ref(temp_var_place))
+            }
+        }
     }
 
     fn convert_deref(&mut self, node: &Traced<AstNode>) -> Option<Value> {

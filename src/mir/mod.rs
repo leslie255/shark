@@ -97,6 +97,10 @@ pub struct Place {
 }
 
 impl Place {
+    pub fn with_projections(local: Variable, projections: Vec<ProjectionEle>) -> Self {
+        Self { local, projections }
+    }
+
     pub fn no_projection(local: Variable) -> Self {
         Self {
             local,
