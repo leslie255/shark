@@ -4,5 +4,6 @@ fn id(x: i32) -> i32 {
 }
 
 fn main() {
-    let _ = id();
+    let x = id(10);
+    return;
 }

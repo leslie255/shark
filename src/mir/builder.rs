@@ -1,11 +1,10 @@
-use std::{collections::HashMap, ops::Deref};
+use std::{borrow::Cow, collections::HashMap, ops::Deref};
 
-use either::Either::{Left, Right};
 use index_vec::IndexVec;
 
 use crate::{
     ast::{
-        type_expr::{NumericType, TypeExpr, TYPEEXPR_VOID},
+        type_expr::{NumericType, TypeExpr},
         Ast, AstNode, AstNodeRef, Signature,
     },
     error::{
@@ -17,8 +16,7 @@ use crate::{
 };
 
 use super::{
-    Block, BlockRef, Lvalue, MirFunction, MirObject, Operand, Rvalue, Statement, Terminator,
-    VarInfo, Variable,
+    Block, BlockRef, MirFunction, MirObject, Place, Statement, Terminator, Value, VarInfo, Variable,
 };
 
 /// Contains states needed for the building of a MIR function.
@@ -40,7 +38,7 @@ struct MirFuncBuilder<'g> {
     /// Avoid directly indexing `self.function.blocks`, always use `add_stmt` and `set_term` for
     /// writing to the current block. This is to ensure that:
     ///     1. Existing `StatementRef`s are still valid
-    ///     2. (TODO) If a block is early-terminated, `add_stmt` and `set_term` won't actually do anything
+    ///     2. If a block is early-terminated, `add_stmt` and `set_term` won't actually do anything
     current_block: BlockRef,
 
     /// If the current block is already early-terminated, no further writing is done on the block,
@@ -94,7 +92,7 @@ impl<'g> MirFuncBuilder<'g> {
             Some(x) => x,
             None => return,
         };
-        if !self.operand_type(&oper).map_or(true, TypeExpr::is_trivial) {
+        if !self.deduce_val_ty(&oper).map_or(true, |t| t.is_trivial()) {
             ErrorContent::UnusedValue
                 .wrap(node.src_loc())
                 .collect_into(&self.global.err_collector);
@@ -102,7 +100,7 @@ impl<'g> MirFuncBuilder<'g> {
         }
     }
 
-    fn convert_expr(&mut self, node: &Traced<AstNode>) -> Option<Operand> {
+    fn convert_expr(&mut self, node: &Traced<AstNode>) -> Option<Value> {
         match node.inner() {
             &AstNode::Identifier(id) => {
                 // TODO: static variables
@@ -110,7 +108,7 @@ impl<'g> MirFuncBuilder<'g> {
                     .find_local(id)
                     .ok_or(ErrorContent::UndefinedVar(id).wrap(node.src_loc()))
                     .collect_err(&self.global.err_collector)?;
-                Some(Lvalue::Variable(var).into())
+                Some(Value::Copy(Place::no_projection(var)))
             }
             &AstNode::Number(numval) => {
                 let numeric_ty = match numval {
@@ -119,11 +117,11 @@ impl<'g> MirFuncBuilder<'g> {
                     NumValue::F(..) => NumericType::default(),
                 };
                 let ty = TypeExpr::_UnknownNumeric(numeric_ty);
-                Some(Rvalue::Number(ty, numval).into())
+                Some(Value::Number(ty, numval))
             }
             AstNode::String(_) => todo!(),
-            &AstNode::Char(c) => Some(Rvalue::Char(c).into()),
-            &AstNode::Bool(b) => Some(Rvalue::Bool(b).into()),
+            &AstNode::Char(c) => Some(Value::Char(c)),
+            &AstNode::Bool(b) => Some(Value::Bool(b)),
             AstNode::Array(_) => todo!(),
             AstNode::MathOp(_, _, _) => todo!(),
             AstNode::BitOp(_, _, _) => todo!(),
@@ -171,7 +169,7 @@ impl<'g> MirFuncBuilder<'g> {
     }
 
     /// Generates a call statement, returns the call results
-    fn convert_call(&mut self, callee: &Traced<AstNode>, args: &[AstNodeRef]) -> Option<Operand> {
+    fn convert_call(&mut self, callee: &Traced<AstNode>, args: &[AstNodeRef]) -> Option<Value> {
         let func_name = callee
             .as_identifier()
             .ok_or(ErrorContent::Todo("Indirect function calls").wrap(callee.src_loc()))
@@ -182,13 +180,9 @@ impl<'g> MirFuncBuilder<'g> {
             .ok_or(ErrorContent::FuncNotExist(func_name).wrap(callee.src_loc()))
             .collect_err(&self.global.err_collector)?
             .sig;
-        let mut arg_opers = Vec::<Operand>::with_capacity(args.len());
-        let result_var = self.function.vars.push(VarInfo {
-            is_mut: false,
-            ty: func_sig.ret_type.clone(),
-            name: None,
-        });
-        let result_oper = Operand::from(Lvalue::Variable(result_var));
+        let mut arg_opers = Vec::<Value>::with_capacity(args.len());
+        let result_var = self.make_temp_var(func_sig.ret_type.clone());
+        let result_place = Place::no_projection(result_var);
         for arg in args {
             let arg_oper = self.convert_expr(&arg)?;
             arg_opers.push(arg_oper);
@@ -196,10 +190,10 @@ impl<'g> MirFuncBuilder<'g> {
         let call_stmt = Statement::StaticCall {
             func_name,
             args: arg_opers,
-            result: result_oper.clone(),
+            result: result_place.clone(),
         };
         self.add_stmt(call_stmt);
-        Some(result_oper)
+        Some(Value::Copy(result_place))
     }
 
     /// Generates a `let` statement, returns the statement
@@ -237,7 +231,7 @@ impl<'g> MirFuncBuilder<'g> {
             Some(x) => x.clone(),
             None => {
                 let infered = self
-                    .operand_type(&rhs_oper)
+                    .deduce_val_ty(&rhs_oper)
                     .ok_or(ErrorContent::TypeInferFailed.wrap(lhs.src_loc()))
                     .collect_err(&self.global.err_collector)?;
                 if !infered.is_concrete() {
@@ -246,12 +240,12 @@ impl<'g> MirFuncBuilder<'g> {
                         .collect_into(&self.global.err_collector);
                     return None;
                 }
-                infered.clone()
+                infered.into_owned()
             }
         };
 
         self.function.vars[var].ty = ty;
-        Some(Statement::Assign(Lvalue::Variable(var), rhs_oper))
+        Some(Statement::Assign(Place::no_projection(var), rhs_oper))
     }
 
     fn convert_assign(
@@ -270,14 +264,14 @@ impl<'g> MirFuncBuilder<'g> {
             .collect_err(&self.global.err_collector)?;
         self.locals.last_mut().unwrap().insert(name, var);
         let rhs_oper = self.convert_expr(&rhs)?;
-        Some(Statement::Assign(Lvalue::Variable(var), rhs_oper))
+        Some(Statement::Assign(Place::no_projection(var), rhs_oper))
     }
 
     fn convert_return(
         &mut self,
         child: Option<&Traced<AstNode>>,
         return_loc: SourceLocation,
-    ) -> Option<Operand> {
+    ) -> Option<Value> {
         let child = match child {
             Some(x) => x,
             None => {
@@ -287,41 +281,44 @@ impl<'g> MirFuncBuilder<'g> {
                         .collect_into(&self.global.err_collector);
                     return None;
                 }
-                self.set_term(Terminator::Return(Rvalue::Void.into()));
-                return Some(Rvalue::Unreachable.into());
+                self.set_term(Terminator::Return(Value::Void));
+                return Some(Value::Unreachable);
             }
         };
         let oper = self.convert_expr(child)?;
         self.set_term(Terminator::Return(oper));
-        Some(Rvalue::Unreachable.into())
+        Some(Value::Unreachable)
     }
 
-    /// Deduce the type of an operand, returns `None` if there is a type error (does not report the
+    /// Deduce the type of an rvalue, returns `None` if there is a type error (does not report the
     /// type error)
-    fn operand_type<'a>(&'a self, oper: &'a Operand) -> Option<&'a TypeExpr> {
-        match &oper.0 {
-            Left(lval) => self.lval_type(lval),
-            Right(rval) => match rval {
-                Rvalue::Number(ty, _) => Some(ty),
-                Rvalue::Bool(..) => Some(&TypeExpr::Bool),
-                Rvalue::Char(..) => Some(&TypeExpr::Char),
-                &Rvalue::CallResult(var) => Some(&self.function.vars[var].ty),
-                Rvalue::Void => Some(&TYPEEXPR_VOID),
-                Rvalue::Unreachable => Some(&TypeExpr::Never),
-            },
+    fn deduce_val_ty<'a>(&'a self, rval: &'a Value) -> Option<Cow<'a, TypeExpr>> {
+        match rval {
+            Value::Number(ty, _) => Some(Cow::Borrowed(ty)),
+            Value::Bool(..) => Some(Cow::Owned(TypeExpr::Bool)),
+            Value::Char(..) => Some(Cow::Owned(TypeExpr::Char)),
+            Value::Copy(place) => self.deduce_place_type(place),
+            Value::AddrOf(place) => {
+                let t = self.deduce_place_type(place).map(Cow::into_owned)?;
+                Some(Cow::Owned(TypeExpr::Ref(Box::new(t))))
+            }
+            Value::Void => Some(Cow::Owned(TypeExpr::void())),
+            Value::Unreachable => Some(Cow::Owned(TypeExpr::Never)),
         }
     }
 
     /// Deduce the type of an lvalue, returns `None` if there is a type error (does not report the
     /// type error)
-    fn lval_type<'a>(&'a self, lval: &Lvalue) -> Option<&'a TypeExpr> {
-        match lval {
-            Lvalue::Deref(lval) => match self.lval_type(&lval)? {
-                TypeExpr::Ptr(ty) | TypeExpr::Ref(ty) => Some(&ty),
-                _ => None,
-            },
-            &Lvalue::Variable(var) => Some(&self.function.vars[var].ty),
-        }
+    fn deduce_place_type<'a>(&'a self, lval: &Place) -> Option<Cow<'a, TypeExpr>> {
+        Some(Cow::Borrowed(&self.function.vars[lval.local].ty))
+    }
+
+    fn make_temp_var(&mut self, ty: TypeExpr) -> Variable {
+        self.function.vars.push(VarInfo {
+            is_mut: false,
+            ty,
+            name: None,
+        })
     }
 
     /// Add a statement to the current block

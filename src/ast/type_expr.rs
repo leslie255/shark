@@ -1,7 +1,5 @@
 use std::fmt::{Debug, Display, Formatter};
 
-pub static TYPEEXPR_VOID: TypeExpr = TypeExpr::void();
-
 /// `TypeExpr` implements `Eq`, but in the type checker it should always be compared by
 /// `gen::type_matches` to comparing with co-variance
 #[derive(Clone, PartialEq, Eq)]
@@ -176,8 +174,8 @@ impl TypeExpr {
             TypeExpr::Union => false,
             TypeExpr::Enum => false,
             TypeExpr::_UnknownNumeric(_) => false,
-            TypeExpr::_Unknown => false,
-            TypeExpr::Never => false,
+            TypeExpr::_Unknown => true,
+            TypeExpr::Never => true,
         }
     }
 }

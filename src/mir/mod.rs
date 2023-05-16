@@ -2,7 +2,6 @@ pub mod builder;
 
 use std::fmt::Debug;
 
-use either::Either;
 use index_vec::IndexVec;
 
 use crate::{
@@ -51,11 +50,11 @@ impl index_vec::Idx for BlockRef {
 
 #[derive(Debug, Clone)]
 pub enum Statement {
-    Assign(Lvalue, Operand),
+    Assign(Place, Value),
     StaticCall {
         func_name: &'static str,
-        args: Vec<Operand>,
-        result: Operand,
+        args: Vec<Value>,
+        result: Place,
     },
     /// TODO
     DynCall,
@@ -74,45 +73,32 @@ impl index_vec::Idx for StatementRef {
     }
 }
 
+/// An lvalue can be used as LHS of assignment, but it can also be used to just yield a value
+/// TODO: projections
 #[derive(Clone)]
-pub enum Lvalue {
-    Deref(Box<Lvalue>),
-    Variable(Variable),
+pub struct Place {
+    pub local: Variable,
+    pub projections: Vec<!>,
 }
 
-#[derive(Debug, Clone)]
-pub enum Rvalue {
+impl Place {
+    pub fn no_projection(local: Variable) -> Self {
+        Self {
+            local,
+            projections: Vec::new(),
+        }
+    }
+}
+
+#[derive(Clone)]
+pub enum Value {
     Number(TypeExpr, NumValue),
     Bool(bool),
     Char(char),
-    CallResult(Variable),
+    Copy(Place),
+    AddrOf(Place),
     Void,
     Unreachable,
-}
-
-#[derive(Clone)]
-pub struct Operand(pub Either<Lvalue, Rvalue>);
-
-impl From<Lvalue> for Operand {
-    fn from(lval: Lvalue) -> Self {
-        Self(Either::Left(lval))
-    }
-}
-
-impl From<Rvalue> for Operand {
-    fn from(rval: Rvalue) -> Self {
-        Self(Either::Right(rval))
-    }
-}
-
-impl Operand {
-    pub fn is_lval(&self) -> bool {
-        self.0.is_left()
-    }
-
-    pub fn is_rval(&self) -> bool {
-        self.0.is_right()
-    }
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -131,12 +117,12 @@ pub enum Terminator {
     Jmp(BlockRef),
     CondJmp {
         cond: CmpKind,
-        lhs: Operand,
-        rhs: Operand,
+        lhs: Value,
+        rhs: Value,
         target: BlockRef,
         otherwise: BlockRef,
     },
-    Return(Operand),
+    Return(Value),
     Unreachable,
 }
 
@@ -162,27 +148,30 @@ impl Debug for StatementRef {
     }
 }
 
-impl Debug for Lvalue {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::Deref(lval) => write!(f, "deref({:?})", lval),
-            Self::Variable(var) => var.fmt(f),
-        }
-    }
-}
-
-impl Debug for Operand {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match &self.0 {
-            Either::Left(lval) => lval.fmt(f),
-            Either::Right(rval) => rval.fmt(f),
-        }
-    }
-}
-
 impl Debug for Variable {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "var{}", self.0)
+    }
+}
+
+impl Debug for Place {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        // TODO: projections
+        self.local.fmt(f)
+    }
+}
+
+impl Debug for Value {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Number(ty, num) => write!(f, "num({:?} as {:?})", num, ty),
+            Self::Bool(b) => write!(f, "bool({})", b),
+            Self::Char(ch) => write!(f, "char('{}')", ch.escape_unicode()),
+            Self::Copy(place) => write!(f, "copy({:?})", place),
+            Self::AddrOf(place) => write!(f, "addr({:?})", place),
+            Self::Void => write!(f, "void"),
+            Self::Unreachable => write!(f, "unreachable"),
+        }
     }
 }
 
