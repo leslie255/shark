@@ -178,6 +178,22 @@ impl TypeExpr {
             TypeExpr::Never => true,
         }
     }
+
+    /// Returns `true` if the type expr is [`Ref`].
+    ///
+    /// [`Ref`]: TypeExpr::Ref
+    #[must_use]
+    pub fn is_ref(&self) -> bool {
+        matches!(self, Self::Ref(..))
+    }
+
+    /// Returns `true` if the type expr is [`Ptr`].
+    ///
+    /// [`Ptr`]: TypeExpr::Ptr
+    #[must_use]
+    pub fn is_ptr(&self) -> bool {
+        matches!(self, Self::Ptr(..))
+    }
 }
 
 impl Debug for TypeExpr {

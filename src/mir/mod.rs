@@ -73,12 +73,27 @@ impl index_vec::Idx for StatementRef {
     }
 }
 
-/// An lvalue can be used as LHS of assignment, but it can also be used to just yield a value
-/// TODO: projections
+/// A place is a memory model for expressions like
+/// ```
+/// *thing.field[index]
+/// ```
+///
+/// These expressions can be used as LHS of assignments, or they can be also used to yield a value
+/// from (a.k.a. converting an lvalue to an rvalue), either by copy or reference, the latter is
+/// represented by wrapping it inside `Value::Copy` or `Value::Ref`.
+///
+/// A place is made from two parts. A local variable as its root (`local`), and some "decorators"
+/// (`projections`) on it.
+///
+/// In the above example, "`thing`" is an example of `local`, where as the deref operator, field
+/// access, indexing, are the `projections`.
+///
+/// `projections` are stored from inside to outside. So in the above example, the projection stack
+/// would be `\[Field("field"), Index(...), Deref\]`.
 #[derive(Clone)]
 pub struct Place {
     pub local: Variable,
-    pub projections: Vec<!>,
+    pub projections: Vec<ProjectionEle>,
 }
 
 impl Place {
@@ -90,13 +105,23 @@ impl Place {
     }
 }
 
+/// See `Place` above.
+#[derive(Debug, Clone)]
+pub enum ProjectionEle {
+    Deref,
+    Index(Value),
+    Field(&'static str),
+}
+
+/// It's more like an rvalue. It can be a constant, or a yielded value from a `Place` (either by
+/// copy or by ref).
 #[derive(Clone)]
 pub enum Value {
     Number(TypeExpr, NumValue),
     Bool(bool),
     Char(char),
     Copy(Place),
-    AddrOf(Place),
+    Ref(Place),
     Void,
     Unreachable,
 }
@@ -156,19 +181,31 @@ impl Debug for Variable {
 
 impl Debug for Place {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        // TODO: projections
-        self.local.fmt(f)
+        match self.projections.as_slice() {
+            [] => self.local.fmt(f),
+            projections => {
+                write!(f, "({:?}", self.local)?;
+                for proj in projections {
+                    match proj {
+                        ProjectionEle::Deref => write!(f, ".deref")?,
+                        ProjectionEle::Index(val) => write!(f, ".index({:?})", val)?,
+                        &ProjectionEle::Field(name) => write!(f, ".field({})", name)?,
+                    }
+                }
+                write!(f, ")")
+            }
+        }
     }
 }
 
 impl Debug for Value {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::Number(ty, num) => write!(f, "num({:?} as {:?})", num, ty),
-            Self::Bool(b) => write!(f, "bool({})", b),
-            Self::Char(ch) => write!(f, "char('{}')", ch.escape_unicode()),
-            Self::Copy(place) => write!(f, "copy({:?})", place),
-            Self::AddrOf(place) => write!(f, "addr({:?})", place),
+            Self::Number(ty, num) => write!(f, "val({:?} as {:?})", num, ty),
+            Self::Bool(b) => write!(f, "val({})", b),
+            Self::Char(ch) => write!(f, "val('{}')", ch.escape_unicode()),
+            Self::Copy(place) => write!(f, "copy {:?}", place),
+            Self::Ref(place) => write!(f, "ref {:?}", place),
             Self::Void => write!(f, "void"),
             Self::Unreachable => write!(f, "unreachable"),
         }

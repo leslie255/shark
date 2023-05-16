@@ -300,7 +300,7 @@ impl AstParser {
                 Token::Enum => node = self.parse_enum(token_location)?,
                 Token::AndOp => {
                     let (child, loc) = unary!(precedence = 1);
-                    node = AstNode::TakeRef(child).traced(loc);
+                    node = AstNode::Ref(child).traced(loc);
                 }
                 Token::Mul => {
                     let (child, loc) = unary!(precedence = 1);

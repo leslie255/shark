@@ -16,7 +16,8 @@ use crate::{
 };
 
 use super::{
-    Block, BlockRef, MirFunction, MirObject, Place, Statement, Terminator, Value, VarInfo, Variable,
+    Block, BlockRef, MirFunction, MirObject, Place, ProjectionEle, Statement, Terminator, Value,
+    VarInfo, Variable,
 };
 
 /// Contains states needed for the building of a MIR function.
@@ -145,8 +146,8 @@ impl<'g> MirFuncBuilder<'g> {
             }
             AstNode::MathOpAssign(_, _, _) => todo!(),
             AstNode::BitOpAssign(_, _, _) => todo!(),
-            AstNode::TakeRef(_) => todo!(),
-            AstNode::Deref(_) => todo!(),
+            AstNode::Ref(node) => self.convert_ref(&node),
+            AstNode::Deref(node) => self.convert_deref(&node),
             AstNode::Block(_) => todo!(),
             AstNode::FnDef(_) => todo!(),
             AstNode::If(_) => todo!(),
@@ -253,18 +254,18 @@ impl<'g> MirFuncBuilder<'g> {
         lhs: &Traced<AstNode>,
         rhs: &Traced<AstNode>,
     ) -> Option<Statement> {
-        let name = lhs
-            .as_identifier()
-            .ok_or(ErrorContent::Todo("Pattern-matched `=`").wrap(lhs.src_loc()))
-            .collect_err(&self.global.err_collector)?;
-        // TODO: static variables
-        let var = self
-            .find_local(name)
-            .ok_or(ErrorContent::UndefinedVar(name).wrap(lhs.src_loc()))
-            .collect_err(&self.global.err_collector)?;
-        self.locals.last_mut().unwrap().insert(name, var);
+        let lhs_val = self.convert_expr(lhs)?;
+        let lhs_place = match lhs_val {
+            Value::Copy(place) => place,
+            _ => {
+                ErrorContent::InvalidAssignLHS
+                    .wrap(lhs.src_loc())
+                    .collect_into(&self.global.err_collector);
+                return None;
+            }
+        };
         let rhs_oper = self.convert_expr(&rhs)?;
-        Some(Statement::Assign(Place::no_projection(var), rhs_oper))
+        Some(Statement::Assign(lhs_place, rhs_oper))
     }
 
     fn convert_return(
@@ -290,16 +291,16 @@ impl<'g> MirFuncBuilder<'g> {
         Some(Value::Unreachable)
     }
 
-    /// Deduce the type of an rvalue, returns `None` if there is a type error (does not report the
+    /// Deduce the type of a `Value`, returns `None` if there is a type error (does not report the
     /// type error)
     fn deduce_val_ty<'a>(&'a self, rval: &'a Value) -> Option<Cow<'a, TypeExpr>> {
         match rval {
             Value::Number(ty, _) => Some(Cow::Borrowed(ty)),
             Value::Bool(..) => Some(Cow::Owned(TypeExpr::Bool)),
             Value::Char(..) => Some(Cow::Owned(TypeExpr::Char)),
-            Value::Copy(place) => self.deduce_place_type(place),
-            Value::AddrOf(place) => {
-                let t = self.deduce_place_type(place).map(Cow::into_owned)?;
+            Value::Copy(place) => self.deduce_place_ty(place),
+            Value::Ref(place) => {
+                let t = self.deduce_place_ty(place).map(Cow::into_owned)?;
                 Some(Cow::Owned(TypeExpr::Ref(Box::new(t))))
             }
             Value::Void => Some(Cow::Owned(TypeExpr::void())),
@@ -307,12 +308,13 @@ impl<'g> MirFuncBuilder<'g> {
         }
     }
 
-    /// Deduce the type of an lvalue, returns `None` if there is a type error (does not report the
+    /// Deduce the type of a `Place`, returns `None` if there is a type error (does not report the
     /// type error)
-    fn deduce_place_type<'a>(&'a self, lval: &Place) -> Option<Cow<'a, TypeExpr>> {
-        Some(Cow::Borrowed(&self.function.vars[lval.local].ty))
+    fn deduce_place_ty<'a>(&'a self, place: &Place) -> Option<Cow<'a, TypeExpr>> {
+        Some(Cow::Borrowed(&self.function.vars[place.local].ty))
     }
 
+    /// Creates a unnamed, immutable variable, with a given type
     fn make_temp_var(&mut self, ty: TypeExpr) -> Variable {
         self.function.vars.push(VarInfo {
             is_mut: false,
@@ -344,6 +346,37 @@ impl<'g> MirFuncBuilder<'g> {
             .rev()
             .find_map(|map| map.get(name))
             .copied()
+    }
+
+    fn convert_ref(&mut self, _node: &Traced<AstNode>) -> Option<Value> {
+        todo!()
+    }
+
+    fn convert_deref(&mut self, node: &Traced<AstNode>) -> Option<Value> {
+        let val = self.convert_expr(node)?;
+        let place = match val {
+            Value::Copy(mut place) => {
+                if self
+                    .deduce_place_ty(&place)
+                    .map_or(true, |t| !t.is_ref() && !t.is_ptr())
+                {
+                    ErrorContent::InvalidDeref
+                        .wrap(node.src_loc())
+                        .collect_into(&self.global.err_collector);
+                    return None;
+                }
+                place.projections.push(ProjectionEle::Deref);
+                place
+            }
+            Value::Ref(place) => place,
+            _ => {
+                ErrorContent::InvalidDeref
+                    .wrap(node.src_loc())
+                    .collect_into(&self.global.err_collector);
+                return None;
+            }
+        };
+        Some(Value::Copy(place))
     }
 }
 

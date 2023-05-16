@@ -96,7 +96,7 @@ pub enum AstNode {
     BitOpAssign(BitOpKind, AstNodeRef, AstNodeRef),
 
     // --- Reference operations
-    TakeRef(AstNodeRef),
+    Ref(AstNodeRef),
     Deref(AstNodeRef),
 
     // -- Control flow

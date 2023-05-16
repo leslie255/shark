@@ -1,5 +1,5 @@
 #![feature(string_leak)]
-#![feature(never_type)]
+#![feature(never_type)] // for placeholders in prototyping
 #![feature(iter_collect_into)]
 #![allow(dead_code)]
 
