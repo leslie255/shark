@@ -20,12 +20,20 @@ impl NumValue {
     }
 
     /// Returns a `i64` value from be bytes, ignoring arithmetics
-    pub fn to_be(self)->i64 {
-        i64::from_be_bytes(match self{
+    pub fn to_be(self) -> i64 {
+        i64::from_be_bytes(match self {
             NumValue::U(x) => x.to_be_bytes(),
             NumValue::I(x) => x.to_be_bytes(),
             NumValue::F(x) => x.to_be_bytes(),
         })
+    }
+
+    pub fn to_be_bytes(self) -> [u8; 8] {
+        match self {
+            NumValue::U(x) => x.to_be_bytes(),
+            NumValue::I(x) => x.to_be_bytes(),
+            NumValue::F(x) => x.to_be_bytes(),
+        }
     }
 
     /// Returns `true` if the num value is [`F`].
@@ -42,7 +50,7 @@ impl NumValue {
     /// [`U`]: NumValue::U
     #[must_use]
     pub fn is_int(&self) -> bool {
-        matches!(self, Self::I(..)|Self::U(..))
+        matches!(self, Self::I(..) | Self::U(..))
     }
 }
 impl Debug for NumValue {

@@ -2,7 +2,7 @@ use std::{
     cell::{Ref, RefCell, RefMut},
     collections::{hash_map::Entry, HashMap},
     fmt::Debug,
-    ops::Range,
+    ops::{Range, Deref},
     rc::Rc,
 };
 
@@ -307,9 +307,9 @@ pub fn build_global_context(
 ) -> GlobalContext {
     let mut global = GlobalContext::prototype(obj_module, err_collector);
     let mut next_func_index = 0u32;
-    for item in ast_parser.iter() {
-        let item = item.as_ref();
-        match item.inner() {
+    for item_node in ast_parser.iter() {
+        let item_node = item_node.deref();
+        match item_node.inner() {
             AstNode::FnDef(function) => {
                 let func_index = next_func_index;
                 next_func_index += 1;
@@ -319,11 +319,11 @@ pub fn build_global_context(
                 };
                 global
                     .declare_func(function.name, function.sign.clone(), func_index, linkage)
-                    .map_err(|_| ErrorContent::FuncRedef.wrap(item.src_loc()))
+                    .map_err(|_| ErrorContent::FuncRedef.wrap(item_node.src_loc()))
                     .collect_err(&global.err_collector);
             }
             _ => ErrorContent::ExprNotAllowedAtTopLevel
-                .wrap(item.src_loc())
+                .wrap(item_node.src_loc())
                 .collect_into(&global.err_collector),
         }
     }

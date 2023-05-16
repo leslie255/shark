@@ -1,13 +1,13 @@
 #![allow(unused_imports)]
 
-use std::ops::Range;
+use std::ops::{Range, Deref};
 
 use crate::{
     ast::{
-        type_expr::TypeExpr, Ast, AstNode, AstNodeRef, CookedAst, Function, MathOpKind, Signature,
+        type_expr::TypeExpr, Ast, AstNode, AstNodeRef, Function, MathOpKind, Signature,
     },
     error::{location::SourceLocation, CollectIfErr, ErrorContent},
-    token::NumValue,
+    token::NumValue, mir::MirObject,
 };
 use cranelift::prelude::{ExtFuncData, ExternalName, InstBuilder, TrapCode};
 use cranelift_codegen::{
@@ -23,10 +23,7 @@ use cranelift_frontend::{FunctionBuilder, FunctionBuilderContext, Variable};
 use cranelift_module::{Linkage, Module};
 use cranelift_object::{ObjectBuilder, ObjectModule};
 
-pub use self::{
-    context::{build_global_context, GlobalContext},
-    typecheck::cook_ast,
-};
+pub use self::context::{build_global_context, GlobalContext};
 
 pub use cranelift::prelude::{
     types as clif_types, EntityRef, Signature as ClifSignature, Type as ClifType,
@@ -35,7 +32,6 @@ pub use cranelift::prelude::{
 
 use self::{
     context::LocalContext,
-    typecheck::type_matches,
     value::{FlatType, Value},
 };
 
@@ -88,14 +84,6 @@ fn trans_ty(global: &GlobalContext, ty: &TypeExpr) -> FlatType {
 }
 
 #[allow(unused_variables)]
-pub fn compile(global: &mut GlobalContext, ast: &CookedAst) {
-    for node in &ast.root_nodes {
-        let node = node.as_ref();
-        match node.inner() {
-            AstNode::FnDef(func) => {
-                todo!()
-            }
-            _ => (), // already reported the error in `build_global_context`
-        }
-    }
+pub fn compile(global: &mut GlobalContext, mir: &MirObject) {
+    todo!()
 }

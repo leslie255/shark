@@ -3,15 +3,18 @@
 #![feature(iter_collect_into)]
 #![allow(dead_code)]
 
+extern crate index_vec;
+
 mod ast;
 mod buffered_content;
 mod error;
 mod gen;
+mod mir;
 mod string;
 mod term_color;
 mod token;
 
-use std::{env, rc::Rc, fs};
+use std::{env, fs, rc::Rc};
 
 use ast::parser::AstParser;
 use buffered_content::BufferedContent;
@@ -30,13 +33,12 @@ fn main() {
         Rc::clone(&err_collector),
     );
     dbg!(&global_context);
-    println!("--------------- Raw AST: ----------------");
-    dbg!(&ast_parser.ast.root_nodes);
-    let cooked_ast = gen::cook_ast(&global_context, ast_parser.ast);
-    println!("-------------- Cooked AST: --------------");
-    dbg!(&cooked_ast.0.root_nodes);
+    let ast = ast_parser.ast;
+    dbg!(&ast.root_nodes);
+    let mir_object = mir::builder::make_mir(&global_context, &ast);
+    dbg!(&mir_object);
 
-    //gen::compile(&mut global_context, &ast_parser.ast);
+    //gen::compile(&mut global_context, &mir_object);
 
     //let bytes = global_context.finish().emit().unwrap();
     //write_bytes_to_file("output.o", &bytes).unwrap();

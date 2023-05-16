@@ -2,14 +2,12 @@ pub mod parser;
 pub mod type_expr;
 
 use std::{
-    collections::HashMap,
     fmt::{Debug, Write},
     ops::Deref,
 };
 
 use crate::{
     error::location::{IntoSourceLoc, Traced},
-    gen::ClifType,
     token::NumValue,
 };
 use type_expr::TypeExpr;
@@ -18,7 +16,6 @@ use type_expr::TypeExpr;
 /// Uses `AstNodeRef` for inter-reference between nodes
 #[derive(Debug, Default)]
 pub struct Ast {
-    /// Pool of nodes with a mut lock
     node_pool: Box<Vec<Traced<AstNode>>>,
     pub str_pool: Vec<String>,
     pub root_nodes: Vec<AstNodeRef>,
@@ -52,18 +49,20 @@ impl Ast {
         self.str_pool.push(str);
         self.str_pool.len() - 1
     }
+
+    /// Get the node pool for debug
+    pub unsafe fn node_pool(&self) -> *const Vec<Traced<AstNode>> {
+        self.node_pool.as_ref()
+    }
 }
 
 /// A node inside an AST
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub enum AstNode {
     // --- Simple things
     // Global identifier
     Identifier(&'static str),
-    // Local variables, names of the variables are stored in the parent `Function`
-    Variable(Variable),
     Number(NumValue),
-    TypedNumber(ClifType, NumValue),
     /// By index in `Ast.str_pool`
     String(usize),
     Char(char),
@@ -153,6 +152,14 @@ impl AstNode {
             None
         }
     }
+
+    /// Returns `true` if the ast node is [`Return`].
+    ///
+    /// [`Return`]: AstNode::Return
+    #[must_use]
+    pub const fn is_return(&self) -> bool {
+        matches!(self, Self::Return(..))
+    }
 }
 
 impl Default for AstNode {
@@ -166,22 +173,18 @@ impl Default for AstNode {
 /// Should only be initialized by an Ast
 #[derive(Clone, Copy)]
 pub struct AstNodeRef {
-    pool: *mut Vec<Traced<AstNode>>,
+    pool: *const Vec<Traced<AstNode>>,
     i: usize,
 }
-impl AsRef<Traced<AstNode>> for AstNodeRef {
-    fn as_ref(&self) -> &Traced<AstNode> {
+impl Deref for AstNodeRef {
+    type Target = Traced<AstNode>;
+    fn deref(&self) -> &Self::Target {
         unsafe { (*self.pool).get_unchecked(self.i) }
-    }
-}
-impl AsMut<Traced<AstNode>> for AstNodeRef {
-    fn as_mut(&mut self) -> &mut Traced<AstNode> {
-        unsafe { (*self.pool).get_unchecked_mut(self.i) }
     }
 }
 impl Debug for AstNodeRef {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        self.as_ref().fmt(f)
+        self.deref().fmt(f)
     }
 }
 
@@ -227,123 +230,16 @@ impl Debug for Signature {
     }
 }
 
-/// Context inside a function
-#[derive(Clone, Debug)]
-pub struct LocalContext {
-    var_tables: Vec<VarTable>,
-    pub return_type: TypeExpr,
-}
-
-impl LocalContext {
-    pub fn new(return_type: TypeExpr) -> Self {
-        Self {
-            var_tables: vec![VarTable::default()],
-            return_type,
-        }
-    }
-
-    fn top_var_table(&self) -> &VarTable {
-        self.var_tables.last().expect("Variable stack is empty")
-    }
-
-    fn top_var_table_mut(&mut self) -> &mut VarTable {
-        self.var_tables.last_mut().expect("Variable stack is empty")
-    }
-
-    /// Get the variable ID from a name
-    pub fn var_id(&self, name: &str) -> Option<Variable> {
-        self.top_var_table()
-            .var_ids
-            .get(name)
-            .map(|&id| Variable(id))
-    }
-
-    /// Get the name of the variable from its ID
-    pub fn var_name(&self, id: Variable) -> Option<&'static str> {
-        self.top_var_table().vars.get(id.0).map(|(name, _)| *name)
-    }
-
-    /// Get the type of the variable from its ID
-    pub fn var_ty(&self, id: Variable) -> Option<&TypeExpr> {
-        self.top_var_table().vars.get(id.0).map(|(_, ty)| ty)
-    }
-
-    pub fn var_ty_mut(&mut self, id: Variable) -> Option<&mut TypeExpr> {
-        self.top_var_table_mut()
-            .vars
-            .get_mut(id.0)
-            .map(|(_, ty)| ty)
-    }
-
-    pub fn add_var(&mut self, name: &'static str, ty: TypeExpr) -> Variable {
-        let var_table = self.top_var_table_mut();
-        let id = var_table.vars.len();
-        var_table.var_ids.insert(name, id);
-        var_table.vars.push((name, ty));
-        Variable(id)
-    }
-
-    pub fn enters_block(&mut self) {
-        self.var_tables.push(VarTable::default());
-    }
-
-    pub fn leaves_block(&mut self) {
-        self.var_tables
-            .pop()
-            .expect("Var table is empty when LocalContext::leaves_block is called");
-    }
-}
-
-#[derive(Clone, Default, Debug)]
-pub struct VarTable {
-    pub vars: Vec<(&'static str, TypeExpr)>,
-    pub var_ids: HashMap<&'static str, usize>,
-}
-impl VarTable {
-    /// Get the variable ID from a name
-    pub fn var_id(&self, name: &str) -> Option<Variable> {
-        self.var_ids.get(name).map(|&id| Variable(id))
-    }
-
-    /// Get the name of the variable from its ID
-    pub fn var_name(&self, id: Variable) -> Option<&'static str> {
-        self.vars.get(id.0).map(|(name, _)| *name)
-    }
-
-    /// Get the type of the variable from its ID
-    pub fn var_ty(&self, id: Variable) -> Option<&TypeExpr> {
-        self.vars.get(id.0).map(|(_, ty)| ty)
-    }
-
-    pub fn var_ty_mut(&mut self, id: Variable) -> Option<&mut TypeExpr> {
-        self.vars.get_mut(id.0).map(|(_, ty)| ty)
-    }
-
-    pub fn add_var(&mut self, name: &'static str, ty: TypeExpr) -> Variable {
-        let id = self.vars.len();
-        self.var_ids.insert(name, id);
-        self.vars.push((name, ty));
-        Variable(id)
-    }
-}
-
 #[derive(Clone)]
 pub struct Function {
     pub name: &'static str,
     pub sign: Signature,
     pub body: Option<Vec<AstNodeRef>>,
-    pub local_ctx: LocalContext,
 }
 
 impl Function {
     pub fn new(name: &'static str, sign: Signature, body: Option<Vec<AstNodeRef>>) -> Self {
-        let return_type = sign.ret_type.clone();
-        Self {
-            name,
-            sign,
-            body,
-            local_ctx: LocalContext::new(return_type),
-        }
+        Self { name, sign, body }
     }
 }
 
@@ -357,14 +253,14 @@ impl Debug for Function {
         if f.alternate() {
             writeln!(f, " {{")?;
             for n in body {
-                let n = n.as_ref();
+                let n = n.deref();
                 f.pad("")?;
                 writeln!(f, "\t{:?}\n\t{:?}\n", n.src_loc(), n)?;
             }
         } else {
             write!(f, "{{")?;
             for n in body.iter() {
-                let n = n.as_ref();
+                let n = n.deref();
                 write!(f, "{:?}\t{:?};", n.src_loc(), n)?;
             }
         }
@@ -372,15 +268,6 @@ impl Debug for Function {
         if f.alternate() {
             writeln!(f, "")?;
         }
-        f.pad("vars:")?;
-        f.debug_map()
-            .entries(
-                self.local_ctx
-                    .var_tables
-                    .iter()
-                    .flat_map(|x| x.vars.iter().enumerate().map(|(i, x)| (Variable(i), x))),
-            )
-            .finish()?;
         Ok(())
     }
 }
@@ -475,13 +362,4 @@ pub enum CmpKind {
     Le,
     GrEq,
     LeEq,
-}
-
-/// Only used in Cooked AST
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub struct Variable(pub usize);
-impl Debug for Variable {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "var{}", self.0)
-    }
 }

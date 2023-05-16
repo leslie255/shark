@@ -1,6 +1,5 @@
-fn main() -> i32 {
-    let a: i32 = 255;
+fn f(x: i32) {
+    let a = x;
     let b = 255;
-    let c = a + b;
-    c
+    b = a;
 }

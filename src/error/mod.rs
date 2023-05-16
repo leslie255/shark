@@ -118,6 +118,11 @@ pub enum ErrorContent {
     UnreachableExpr,
     InvalidLetLHS,
     InvalidAssignLHS,
+    TailCannotBeReturn,
+    UnusedValue,
+    TypeInferFailed,
+
+    Todo(&'static str),
 }
 impl ErrorContent {
     #[must_use]
@@ -166,6 +171,10 @@ impl ErrorContent {
             Self::UnreachableExpr => "unreachable expressions",
             Self::InvalidLetLHS => "invalid lhs for `let`",
             Self::InvalidAssignLHS => "invalid lhs for assignment",
+            Self::TailCannotBeReturn => "tail cannot be return",
+            Self::UnusedValue => "unused value",
+            Self::TypeInferFailed => "unable to infer type of variable",
+            Self::Todo(..) => "compiler todo",
         }
     }
     fn description(&self) -> String {
@@ -238,6 +247,12 @@ impl ErrorContent {
             Self::InvalidAssignLHS => {
                 "Only variable or tuple of variables is allowed as LHS of assignment".to_string()
             }
+            Self::TailCannotBeReturn => "Try adding a `;`".to_string(),
+            Self::UnusedValue => {
+                "Value returned from this expression is non-trivial and is not used".to_string()
+            }
+            Self::TypeInferFailed => "Try specifying a type for this variable".to_string(),
+            Self::Todo(msg) => format!("TODO: {}", msg),
         }
     }
 }

@@ -70,61 +70,55 @@ impl TypeExpr {
 
     /// Doesn't include `_UnknownNumeric`
     pub fn is_numeric(&self) -> bool {
-        match self {
+        matches!(
+            self,
             TypeExpr::USize
-            | TypeExpr::ISize
-            | TypeExpr::U128
-            | TypeExpr::U64
-            | TypeExpr::U32
-            | TypeExpr::U16
-            | TypeExpr::U8
-            | TypeExpr::I128
-            | TypeExpr::I64
-            | TypeExpr::I32
-            | TypeExpr::I16
-            | TypeExpr::I8
-            | TypeExpr::F64
-            | TypeExpr::F32 => true,
-            _ => false,
-        }
+                | TypeExpr::ISize
+                | TypeExpr::U128
+                | TypeExpr::U64
+                | TypeExpr::U32
+                | TypeExpr::U16
+                | TypeExpr::U8
+                | TypeExpr::I128
+                | TypeExpr::I64
+                | TypeExpr::I32
+                | TypeExpr::I16
+                | TypeExpr::I8
+                | TypeExpr::F64
+                | TypeExpr::F32
+        )
     }
 
     pub fn is_u(&self) -> bool {
-        match self {
+        matches!(
+            self,
             TypeExpr::USize
-            | TypeExpr::U128
-            | TypeExpr::U64
-            | TypeExpr::U32
-            | TypeExpr::U16
-            | TypeExpr::U8 => true,
-            _ => false,
-        }
+                | TypeExpr::U128
+                | TypeExpr::U64
+                | TypeExpr::U32
+                | TypeExpr::U16
+                | TypeExpr::U8
+        )
     }
 
     pub fn is_i(&self) -> bool {
-        match self {
+        matches!(
+            self,
             TypeExpr::ISize
-            | TypeExpr::I128
-            | TypeExpr::I64
-            | TypeExpr::I32
-            | TypeExpr::I16
-            | TypeExpr::I8 => true,
-            _ => false,
-        }
+                | TypeExpr::I128
+                | TypeExpr::I64
+                | TypeExpr::I32
+                | TypeExpr::I16
+                | TypeExpr::I8
+        )
     }
 
     pub fn is_f(&self) -> bool {
-        match self {
-            TypeExpr::F64 | TypeExpr::F32 => true,
-            _ => false,
-        }
+        matches!(self, TypeExpr::F64 | TypeExpr::F32)
     }
 
     pub fn is_concrete(&self) -> bool {
-        match self {
-            TypeExpr::_Unknown => false,
-            _ => true,
-        }
+        !matches!(self, TypeExpr::_UnknownNumeric(..) | TypeExpr::_Unknown)
     }
 
     /// Returns `true` if the type expr is [`_UnknownNumeric`].
@@ -149,6 +143,41 @@ impl TypeExpr {
     #[must_use]
     pub fn is_unknown(&self) -> bool {
         matches!(self, Self::_Unknown)
+    }
+
+    pub fn is_trivial(&self) -> bool {
+        match self {
+            TypeExpr::INVALID => false,
+            TypeExpr::USize => false,
+            TypeExpr::ISize => false,
+            TypeExpr::U128 => false,
+            TypeExpr::U64 => false,
+            TypeExpr::U32 => false,
+            TypeExpr::U16 => false,
+            TypeExpr::U8 => false,
+            TypeExpr::I128 => false,
+            TypeExpr::I64 => false,
+            TypeExpr::I32 => false,
+            TypeExpr::I16 => false,
+            TypeExpr::I8 => false,
+            TypeExpr::F64 => false,
+            TypeExpr::F32 => false,
+            TypeExpr::Char => false,
+            TypeExpr::Bool => false,
+            TypeExpr::Ptr(_) => false,
+            TypeExpr::Ref(_) => false,
+            TypeExpr::Slice(_) => false,
+            TypeExpr::Array(_, _) => false,
+            TypeExpr::Tuple(fields) => fields.is_empty(),
+            TypeExpr::Fn(_, _) => false,
+            TypeExpr::TypeName(_) => false,
+            TypeExpr::Struct => false,
+            TypeExpr::Union => false,
+            TypeExpr::Enum => false,
+            TypeExpr::_UnknownNumeric(_) => false,
+            TypeExpr::_Unknown => false,
+            TypeExpr::Never => false,
+        }
     }
 }
 
