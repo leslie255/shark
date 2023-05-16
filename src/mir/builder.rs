@@ -5,16 +5,19 @@ use index_vec::IndexVec;
 
 use crate::{
     ast::{
-        type_expr::{NumericType, TypeExpr},
+        type_expr::{NumericType, TypeExpr, TYPEEXPR_VOID},
         Ast, AstNode, AstNodeRef, Signature,
     },
-    error::{location::Traced, CollectIfErr, ErrorContent},
+    error::{
+        location::{SourceLocation, Traced},
+        CollectIfErr, ErrorContent,
+    },
     gen::GlobalContext,
     token::NumValue,
 };
 
 use super::{
-    Block, BlockRef, Lvalue, MirFunction, MirObject, Operand, Rvalue, Statement, StatementRef,
+    Block, BlockRef, Lvalue, MirFunction, MirObject, Operand, Rvalue, Statement, Terminator,
     VarInfo, Variable,
 };
 
@@ -24,23 +27,29 @@ use super::{
 /// `MirFuncBuilder::finish` to finally yield the built `MirFunction`.
 #[derive(Debug, Clone)]
 struct MirFuncBuilder<'g> {
-
     /// The global context
     global: &'g GlobalContext,
 
     /// The MIR function this builder is constructing
     function: MirFunction,
-    
+
     /// Return type of the function
     ret_ty: TypeExpr,
 
     /// A "cursor" pointing at the current block that the builder is writing to.
-    /// Avoid directly indexing `self.function.blocks`, always use `add_stmt` and `set_terminator`
-    /// for writing to the current block.
+    /// Avoid directly indexing `self.function.blocks`, always use `add_stmt` and `set_term` for
+    /// writing to the current block. This is to ensure that:
+    ///     1. Existing `StatementRef`s are still valid
+    ///     2. (TODO) If a block is early-terminated, `add_stmt` and `set_term` won't actually do anything
     current_block: BlockRef,
 
+    /// If the current block is already early-terminated, no further writing is done on the block,
+    /// but we would still want to dry-run the MIR builder on the unreachable code for typechecking.
+    is_early_terminated: bool,
+
     /// Map local variable names to variable ID's, uses a stack structure for entering and exiting
-    /// blocks. If a variable is shadowed then it's overwritten.
+    /// AST blocks.
+    /// If a variable is shadowed then it's overwritten.
     locals: Vec<HashMap<&'static str, Variable>>,
 }
 
@@ -68,6 +77,7 @@ impl<'g> MirFuncBuilder<'g> {
                 vars,
             },
             current_block: BlockRef(0),
+            is_early_terminated: false,
             ret_ty: sign.ret_type.clone(),
             locals,
         }
@@ -143,7 +153,11 @@ impl<'g> MirFuncBuilder<'g> {
             AstNode::FnDef(_) => todo!(),
             AstNode::If(_) => todo!(),
             AstNode::Loop(_) => todo!(),
-            AstNode::Return(_) => todo!(),
+            AstNode::Return(child) => {
+                let result = self.convert_return(child.as_deref(), node.src_loc());
+                self.is_early_terminated = true;
+                result
+            }
             AstNode::Break => todo!(),
             AstNode::Continue => todo!(),
             AstNode::Tail(_) => todo!(),
@@ -199,52 +213,45 @@ impl<'g> MirFuncBuilder<'g> {
             .as_identifier()
             .unwrap_or_else(|| todo!("pattern matched `let`"));
 
+        // Register the variable as type `{unknown}` first before doing anything else.
+        // Because in case of early return we would still want subsequent usages of this variable to
+        // be considered valid by the type checker.
+        let var_info = VarInfo {
+            is_mut: true,
+            ty: TypeExpr::_Unknown,
+            name: Some(name),
+        };
+        let var = self.function.vars.push(var_info);
+        self.locals.last_mut().unwrap().insert(name, var);
+
         // RHS and type cannot be both absent
         if rhs.is_none() && ty.is_none() {
-            // Register the variable as type `{unknown}` and then report error
-            let var_info = VarInfo {
-                is_mut: true,
-                ty: TypeExpr::_Unknown,
-                name: Some(name),
-            };
-            let var = self.function.vars.push(var_info);
-            self.locals.last_mut().unwrap().insert(name, var);
             ErrorContent::LetNoTypeOrRHS
                 .wrap(lhs.src_loc())
                 .collect_into(&self.global.err_collector);
             return None;
         }
 
-        let rhs_oper = || -> Option<Operand> {
-            let rhs = rhs.as_deref()?;
-            self.convert_expr(rhs)
-        }();
+        let rhs_oper = self.convert_expr(rhs.as_deref()?)?;
         let ty = match ty {
             Some(x) => x.clone(),
             None => {
-                let rhs_oper = rhs_oper.as_ref().unwrap();
                 let infered = self
-                    .operand_type(rhs_oper)
+                    .operand_type(&rhs_oper)
                     .ok_or(ErrorContent::TypeInferFailed.wrap(lhs.src_loc()))
                     .collect_err(&self.global.err_collector)?;
                 if !infered.is_concrete() {
                     ErrorContent::Todo("Partial type infer")
                         .wrap(lhs.src_loc())
                         .collect_into(&self.global.err_collector);
-                    TypeExpr::_Unknown
-                } else {
-                    infered.clone()
+                    return None;
                 }
+                infered.clone()
             }
         };
-        let var_info = VarInfo {
-            is_mut: true,
-            ty: ty.clone(),
-            name: Some(name),
-        };
-        let var = self.function.vars.push(var_info);
-        self.locals.last_mut().unwrap().insert(name, var);
-        Some(Statement::Assign(Lvalue::Variable(var), rhs_oper?))
+
+        self.function.vars[var].ty = ty;
+        Some(Statement::Assign(Lvalue::Variable(var), rhs_oper))
     }
 
     fn convert_assign(
@@ -266,6 +273,29 @@ impl<'g> MirFuncBuilder<'g> {
         Some(Statement::Assign(Lvalue::Variable(var), rhs_oper))
     }
 
+    fn convert_return(
+        &mut self,
+        child: Option<&Traced<AstNode>>,
+        return_loc: SourceLocation,
+    ) -> Option<Operand> {
+        let child = match child {
+            Some(x) => x,
+            None => {
+                if !self.ret_ty.is_void() {
+                    ErrorContent::MismatchdTypes(self.ret_ty.clone(), TypeExpr::void())
+                        .wrap(return_loc)
+                        .collect_into(&self.global.err_collector);
+                    return None;
+                }
+                self.set_term(Terminator::Return(Rvalue::Void.into()));
+                return Some(Rvalue::Unreachable.into());
+            }
+        };
+        let oper = self.convert_expr(child)?;
+        self.set_term(Terminator::Return(oper));
+        Some(Rvalue::Unreachable.into())
+    }
+
     /// Deduce the type of an operand, returns `None` if there is a type error (does not report the
     /// type error)
     fn operand_type<'a>(&'a self, oper: &'a Operand) -> Option<&'a TypeExpr> {
@@ -276,6 +306,7 @@ impl<'g> MirFuncBuilder<'g> {
                 Rvalue::Bool(..) => Some(&TypeExpr::Bool),
                 Rvalue::Char(..) => Some(&TypeExpr::Char),
                 &Rvalue::CallResult(var) => Some(&self.function.vars[var].ty),
+                Rvalue::Void => Some(&TYPEEXPR_VOID),
                 Rvalue::Unreachable => Some(&TypeExpr::Never),
             },
         }
@@ -294,9 +325,19 @@ impl<'g> MirFuncBuilder<'g> {
     }
 
     /// Add a statement to the current block
-    fn add_stmt(&mut self, stmt: Statement) -> StatementRef {
-        let i = self.current_block;
-        self.function.blocks[i].body.push(stmt)
+    fn add_stmt(&mut self, stmt: Statement) {
+        if !self.is_early_terminated {
+            let i = self.current_block;
+            let _ = self.function.blocks[i].body.push(stmt);
+        }
+    }
+
+    /// Set the terminator for the current block
+    fn set_term(&mut self, term: Terminator) {
+        if !self.is_early_terminated {
+            let i = self.current_block;
+            self.function.blocks[i].terminator = Some(term);
+        }
     }
 
     /// Find a local variable from its name

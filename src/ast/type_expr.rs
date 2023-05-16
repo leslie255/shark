@@ -1,5 +1,7 @@
 use std::fmt::{Debug, Display, Formatter};
 
+pub static TYPEEXPR_VOID: TypeExpr = TypeExpr::void();
+
 /// `TypeExpr` implements `Eq`, but in the type checker it should always be compared by
 /// `gen::type_matches` to comparing with co-variance
 #[derive(Clone, PartialEq, Eq)]
@@ -55,8 +57,7 @@ impl TypeExpr {
         Self::Tuple(Vec::new())
     }
 
-    #[allow(dead_code)]
-    pub fn is_void_tuple(&self) -> bool {
+    pub fn is_void(&self) -> bool {
         matches!(self, Self::Tuple(children) if children.is_empty())
     }
 

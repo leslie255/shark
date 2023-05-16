@@ -1,6 +1,8 @@
-fn f(x: i32) -> i32 {
+fn id(x: i32) -> i32 {
+    return x;
+    let a: i32 = 0;
 }
 
 fn main() {
-    let x = f(10);
+    let _ = id();
 }

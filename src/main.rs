@@ -23,14 +23,11 @@ use error::ErrorCollector;
 fn main() {
     let mut args = env::args();
     args.next().expect("wtf");
-    let file_name: &'static str = String::leak(args.next().expect("Expects one argument"));
+    let file_name = String::leak(args.next().expect("Expects one argument")) as &'static str;
     let buffers = Rc::new(BufferedContent::default());
     let err_collector = Rc::new(ErrorCollector::default());
     let mut ast_parser = AstParser::new(&file_name, Rc::clone(&buffers), Rc::clone(&err_collector));
-    let global_context = gen::build_global_context(
-        &mut ast_parser,
-        Rc::clone(&err_collector),
-    );
+    let global_context = gen::build_global_context(&mut ast_parser, Rc::clone(&err_collector));
     dbg!(&global_context);
     let ast = ast_parser.ast;
     dbg!(&ast.root_nodes);

@@ -86,6 +86,7 @@ pub enum Rvalue {
     Bool(bool),
     Char(char),
     CallResult(Variable),
+    Void,
     Unreachable,
 }
 
@@ -136,6 +137,7 @@ pub enum Terminator {
         otherwise: BlockRef,
     },
     Return(Operand),
+    Unreachable,
 }
 
 #[derive(Debug, Clone)]
