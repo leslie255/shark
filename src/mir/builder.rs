@@ -24,12 +24,23 @@ use super::{
 /// `MirFuncBuilder::finish` to finally yield the built `MirFunction`.
 #[derive(Debug, Clone)]
 struct MirFuncBuilder<'g> {
+
+    /// The global context
     global: &'g GlobalContext,
+
+    /// The MIR function this builder is constructing
     function: MirFunction,
-    current_block: BlockRef,
+    
+    /// Return type of the function
     ret_ty: TypeExpr,
 
-    /// Local variables inside a function from their names
+    /// A "cursor" pointing at the current block that the builder is writing to.
+    /// Avoid directly indexing `self.function.blocks`, always use `add_stmt` and `set_terminator`
+    /// for writing to the current block.
+    current_block: BlockRef,
+
+    /// Map local variable names to variable ID's, uses a stack structure for entering and exiting
+    /// blocks. If a variable is shadowed then it's overwritten.
     locals: Vec<HashMap<&'static str, Variable>>,
 }
 
@@ -113,7 +124,7 @@ impl<'g> MirFuncBuilder<'g> {
             AstNode::BoolNot(_) => todo!(),
             AstNode::UnarySub(_) => todo!(),
             AstNode::UnaryAdd(_) => todo!(),
-            AstNode::Call(_, _) => todo!(),
+            AstNode::Call(callee, args) => self.convert_call(&callee, &args),
             AstNode::Let(lhs, ty, rhs) => {
                 let stmt = self.convert_let(*lhs, ty.as_ref(), *rhs)?;
                 self.add_stmt(stmt);
@@ -145,6 +156,39 @@ impl<'g> MirFuncBuilder<'g> {
         }
     }
 
+    /// Generates a call statement, returns the call results
+    fn convert_call(&mut self, callee: &Traced<AstNode>, args: &[AstNodeRef]) -> Option<Operand> {
+        let func_name = callee
+            .as_identifier()
+            .ok_or(ErrorContent::Todo("Indirect function calls").wrap(callee.src_loc()))
+            .collect_err(&self.global.err_collector)?;
+        let func_sig = &self
+            .global
+            .func(func_name)
+            .ok_or(ErrorContent::FuncNotExist(func_name).wrap(callee.src_loc()))
+            .collect_err(&self.global.err_collector)?
+            .sig;
+        let mut arg_opers = Vec::<Operand>::with_capacity(args.len());
+        let result_var = self.function.vars.push(VarInfo {
+            is_mut: false,
+            ty: func_sig.ret_type.clone(),
+            name: None,
+        });
+        let result_oper = Operand::from(Lvalue::Variable(result_var));
+        for arg in args {
+            let arg_oper = self.convert_expr(&arg)?;
+            arg_opers.push(arg_oper);
+        }
+        let call_stmt = Statement::StaticCall {
+            func_name,
+            args: arg_opers,
+            result: result_oper.clone(),
+        };
+        self.add_stmt(call_stmt);
+        Some(result_oper)
+    }
+
+    /// Generates a `let` statement, returns the statement
     fn convert_let(
         &mut self,
         lhs: AstNodeRef,
@@ -231,6 +275,8 @@ impl<'g> MirFuncBuilder<'g> {
                 Rvalue::Number(ty, _) => Some(ty),
                 Rvalue::Bool(..) => Some(&TypeExpr::Bool),
                 Rvalue::Char(..) => Some(&TypeExpr::Char),
+                &Rvalue::CallResult(var) => Some(&self.function.vars[var].ty),
+                Rvalue::Unreachable => Some(&TypeExpr::Never),
             },
         }
     }

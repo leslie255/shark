@@ -1,5 +1,6 @@
-fn f(x: i32) {
-    let a = x;
-    let b = 255;
-    b = a;
+fn f(x: i32) -> i32 {
+}
+
+fn main() {
+    let x = f(10);
 }

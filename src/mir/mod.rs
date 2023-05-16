@@ -5,7 +5,10 @@ use std::fmt::Debug;
 use either::Either;
 use index_vec::IndexVec;
 
-use crate::{ast::{type_expr::TypeExpr, Signature}, token::NumValue};
+use crate::{
+    ast::{type_expr::TypeExpr, Signature},
+    token::NumValue,
+};
 
 // all variables listed in function head
 // control flow is in SSA-style CFG but variables can be mutable
@@ -16,22 +19,23 @@ pub struct MirObject {
     pub functions: Vec<MirFunction>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct VarInfo {
     pub is_mut: bool,
     pub ty: TypeExpr,
     pub name: Option<&'static str>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct MirFunction {
-    pub blocks: IndexVec<BlockRef, Block>,
     pub vars: IndexVec<Variable, VarInfo>,
+    pub blocks: IndexVec<BlockRef, Block>,
 }
 
 #[derive(Debug, Clone, Default)]
 pub struct Block {
     pub body: IndexVec<StatementRef, Statement>,
+    pub terminator: Option<Terminator>,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -51,7 +55,7 @@ pub enum Statement {
     StaticCall {
         func_name: &'static str,
         args: Vec<Operand>,
-        results: Vec<Operand>,
+        result: Operand,
     },
     /// TODO
     DynCall,
@@ -81,6 +85,8 @@ pub enum Rvalue {
     Number(TypeExpr, NumValue),
     Bool(bool),
     Char(char),
+    CallResult(Variable),
+    Unreachable,
 }
 
 #[derive(Clone)]
@@ -175,5 +181,37 @@ impl Debug for Operand {
 impl Debug for Variable {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "var{}", self.0)
+    }
+}
+
+/// A format "functor" for showing a variable table inside a function
+struct VarsFormatter<'short>(&'short IndexVec<Variable, VarInfo>);
+impl<'short> Debug for VarsFormatter<'short> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_map().entries(self.0.iter_enumerated()).finish()
+    }
+}
+
+impl Debug for VarInfo {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        if self.is_mut {
+            write!(f, "mut ")?;
+        } else {
+            write!(f, "const ")?;
+        }
+        write!(f, "{:?}", self.ty)?;
+        if let Some(name) = self.name {
+            write!(f, " => {:?}", name)?;
+        }
+        Ok(())
+    }
+}
+
+impl Debug for MirFunction {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("MirFunction")
+            .field("vars", &VarsFormatter(&self.vars))
+            .field("blocks", &self.blocks)
+            .finish()
     }
 }

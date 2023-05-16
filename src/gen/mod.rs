@@ -1,13 +1,12 @@
 #![allow(unused_imports)]
 
-use std::ops::{Range, Deref};
+use std::ops::{Deref, Range};
 
 use crate::{
-    ast::{
-        type_expr::TypeExpr, Ast, AstNode, AstNodeRef, Function, MathOpKind, Signature,
-    },
+    ast::{type_expr::TypeExpr, Ast, AstNode, AstNodeRef, Function, MathOpKind, Signature},
     error::{location::SourceLocation, CollectIfErr, ErrorContent},
-    token::NumValue, mir::MirObject,
+    mir::MirObject,
+    token::NumValue,
 };
 use cranelift::prelude::{ExtFuncData, ExternalName, InstBuilder, TrapCode};
 use cranelift_codegen::{
@@ -30,10 +29,7 @@ pub use cranelift::prelude::{
     Value as ClifValue,
 };
 
-use self::{
-    context::LocalContext,
-    value::{FlatType, Value},
-};
+use self::value::{FlatType, Value};
 
 pub fn make_empty_obj_module(name: &str) -> ObjectModule {
     let isa = cranelift_native::builder()

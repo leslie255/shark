@@ -29,7 +29,6 @@ fn main() {
     let mut ast_parser = AstParser::new(&file_name, Rc::clone(&buffers), Rc::clone(&err_collector));
     let global_context = gen::build_global_context(
         &mut ast_parser,
-        gen::make_empty_obj_module("output"),
         Rc::clone(&err_collector),
     );
     dbg!(&global_context);
