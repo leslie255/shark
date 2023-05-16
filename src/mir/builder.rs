@@ -24,6 +24,8 @@ use super::{
 /// User of the builder is expected to call `MirFuncBuilder::make_signature` to construct this
 /// builder, and then feed it with AST nodes by calling `MirFuncBuilder::next_stmt`, and then call
 /// `MirFuncBuilder::finish` to finally yield the built `MirFunction`.
+/// The `convert_*` functions returns `None` on syntax error or unreachable code, they are not
+/// meant to be called from outside.
 #[derive(Debug, Clone)]
 struct MirFuncBuilder<'g> {
     /// The global context
@@ -41,10 +43,6 @@ struct MirFuncBuilder<'g> {
     ///     1. Existing `StatementRef`s are still valid
     ///     2. If a block is early-terminated, `add_stmt` and `set_term` won't actually do anything
     current_block: BlockRef,
-
-    /// If the current block is already early-terminated, no further writing is done on the block,
-    /// but we would still want to dry-run the MIR builder on the unreachable code for typechecking.
-    is_early_terminated: bool,
 
     /// Map local variable names to variable ID's, uses a stack structure for entering and exiting
     /// AST blocks.
@@ -76,7 +74,6 @@ impl<'g> MirFuncBuilder<'g> {
                 vars,
             },
             current_block: BlockRef(0),
-            is_early_terminated: false,
             ret_ty: sign.ret_type.clone(),
             locals,
         }
@@ -134,16 +131,8 @@ impl<'g> MirFuncBuilder<'g> {
             AstNode::UnarySub(_) => todo!(),
             AstNode::UnaryAdd(_) => todo!(),
             AstNode::Call(callee, args) => self.convert_call(&callee, &args),
-            AstNode::Let(lhs, ty, rhs) => {
-                let stmt = self.convert_let(*lhs, ty.as_ref(), *rhs)?;
-                self.add_stmt(stmt);
-                None
-            }
-            &AstNode::Assign(lhs, rhs) => {
-                let stmt = self.convert_assign(&lhs, &rhs)?;
-                self.add_stmt(stmt);
-                None
-            }
+            AstNode::Let(lhs, ty, rhs) => self.convert_let(*lhs, ty.as_ref(), *rhs),
+            AstNode::Assign(lhs, rhs) => self.convert_assign(&lhs, &rhs),
             AstNode::MathOpAssign(_, _, _) => todo!(),
             AstNode::BitOpAssign(_, _, _) => todo!(),
             AstNode::Ref(node) => self.convert_ref(&node),
@@ -152,11 +141,7 @@ impl<'g> MirFuncBuilder<'g> {
             AstNode::FnDef(_) => todo!(),
             AstNode::If(_) => todo!(),
             AstNode::Loop(_) => todo!(),
-            AstNode::Return(child) => {
-                let result = self.convert_return(child.as_deref(), node.src_loc());
-                self.is_early_terminated = true;
-                result
-            }
+            AstNode::Return(child) => self.convert_return(child.as_deref(), node.src_loc()),
             AstNode::Break => todo!(),
             AstNode::Continue => todo!(),
             AstNode::Tail(_) => todo!(),
@@ -169,7 +154,7 @@ impl<'g> MirFuncBuilder<'g> {
         }
     }
 
-    /// Generates a call statement, returns the call results
+    /// Returns the value of the variable that the call results are stored in
     fn convert_call(&mut self, callee: &Traced<AstNode>, args: &[AstNodeRef]) -> Option<Value> {
         let func_name = callee
             .as_identifier()
@@ -197,23 +182,19 @@ impl<'g> MirFuncBuilder<'g> {
         Some(Value::Copy(result_place))
     }
 
-    /// Generates a `let` statement, returns the statement
     fn convert_let(
         &mut self,
         lhs: AstNodeRef,
         ty: Option<&TypeExpr>,
         rhs: Option<AstNodeRef>,
-    ) -> Option<Statement> {
+    ) -> Option<Value> {
         let name = lhs
             .as_identifier()
             .unwrap_or_else(|| todo!("pattern matched `let`"));
 
-        // Register the variable as type `{unknown}` first before doing anything else.
-        // Because in case of early return we would still want subsequent usages of this variable to
-        // be considered valid by the type checker.
         let var_info = VarInfo {
             is_mut: true,
-            ty: TypeExpr::_Unknown,
+            ty: ty.cloned().unwrap_or(TypeExpr::_Unknown),
             name: Some(name),
         };
         let var = self.function.vars.push(var_info);
@@ -228,32 +209,27 @@ impl<'g> MirFuncBuilder<'g> {
         }
 
         let rhs_oper = self.convert_expr(rhs.as_deref()?)?;
-        let ty = match ty {
-            Some(x) => x.clone(),
-            None => {
-                let infered = self
-                    .deduce_val_ty(&rhs_oper)
-                    .ok_or(ErrorContent::TypeInferFailed.wrap(lhs.src_loc()))
-                    .collect_err(&self.global.err_collector)?;
-                if !infered.is_concrete() {
-                    ErrorContent::Todo("Partial type infer")
-                        .wrap(lhs.src_loc())
-                        .collect_into(&self.global.err_collector);
-                    return None;
-                }
-                infered.into_owned()
+        if ty.is_none() {
+            let infered = self
+                .deduce_val_ty(&rhs_oper)
+                .ok_or(ErrorContent::TypeInferFailed.wrap(lhs.src_loc()))
+                .collect_err(&self.global.err_collector)?
+                .into_owned();
+            if !infered.is_concrete() {
+                ErrorContent::Todo("Partial type infer")
+                    .wrap(lhs.src_loc())
+                    .collect_into(&self.global.err_collector);
+                self.set_term(Terminator::Unreachable);
             }
-        };
+            self.function.vars[var].ty = infered;
+        }
 
-        self.function.vars[var].ty = ty;
-        Some(Statement::Assign(Place::no_projection(var), rhs_oper))
+        self.add_stmt(Statement::Assign(Place::no_projection(var), rhs_oper));
+
+        Some(Value::Void)
     }
 
-    fn convert_assign(
-        &mut self,
-        lhs: &Traced<AstNode>,
-        rhs: &Traced<AstNode>,
-    ) -> Option<Statement> {
+    fn convert_assign(&mut self, lhs: &Traced<AstNode>, rhs: &Traced<AstNode>) -> Option<Value> {
         let lhs_val = self.convert_expr(lhs)?;
         let lhs_place = match lhs_val {
             Value::Copy(place) => place,
@@ -265,7 +241,8 @@ impl<'g> MirFuncBuilder<'g> {
             }
         };
         let rhs_oper = self.convert_expr(&rhs)?;
-        Some(Statement::Assign(lhs_place, rhs_oper))
+        self.add_stmt(Statement::Assign(lhs_place, rhs_oper));
+        Some(Value::Void)
     }
 
     fn convert_return(
@@ -283,12 +260,53 @@ impl<'g> MirFuncBuilder<'g> {
                     return None;
                 }
                 self.set_term(Terminator::Return(Value::Void));
-                return Some(Value::Unreachable);
+                return None;
             }
         };
         let oper = self.convert_expr(child)?;
         self.set_term(Terminator::Return(oper));
-        Some(Value::Unreachable)
+        return None;
+    }
+
+    fn convert_ref(&mut self, node: &Traced<AstNode>) -> Option<Value> {
+        let val = self.convert_expr(node)?;
+        match val {
+            Value::Copy(place) => Some(Value::Ref(place)),
+            val => {
+                let ty = self.deduce_val_ty(&val).unwrap().into_owned();
+                let temp_var = self.make_temp_var(ty);
+                let temp_var_place = Place::no_projection(temp_var);
+                self.add_stmt(Statement::Assign(temp_var_place.clone(), val));
+                Some(Value::Ref(temp_var_place))
+            }
+        }
+    }
+
+    fn convert_deref(&mut self, node: &Traced<AstNode>) -> Option<Value> {
+        let val = self.convert_expr(node)?;
+        let place = match val {
+            Value::Copy(mut place) => {
+                if self
+                    .deduce_place_ty(&place)
+                    .map_or(true, |t| !t.is_ref() && !t.is_ptr())
+                {
+                    ErrorContent::InvalidDeref
+                        .wrap(node.src_loc())
+                        .collect_into(&self.global.err_collector);
+                    return None;
+                }
+                place.projections.push(ProjectionEle::Deref);
+                place
+            }
+            Value::Ref(place) => place,
+            _ => {
+                ErrorContent::InvalidDeref
+                    .wrap(node.src_loc())
+                    .collect_into(&self.global.err_collector);
+                return None;
+            }
+        };
+        Some(Value::Copy(place))
     }
 
     /// Deduce the type of a `Value`, returns `None` if there is a type error (does not report the
@@ -342,17 +360,19 @@ impl<'g> MirFuncBuilder<'g> {
 
     /// Add a statement to the current block
     fn add_stmt(&mut self, stmt: Statement) {
-        if !self.is_early_terminated {
-            let i = self.current_block;
-            let _ = self.function.blocks[i].body.push(stmt);
+        let i = self.current_block;
+        let current_block = &mut self.function.blocks[i];
+        if current_block.terminator.is_none() {
+            let _ = current_block.body.push(stmt);
         }
     }
 
     /// Set the terminator for the current block
     fn set_term(&mut self, term: Terminator) {
-        if !self.is_early_terminated {
-            let i = self.current_block;
-            self.function.blocks[i].terminator = Some(term);
+        let i = self.current_block;
+        let current_block = &mut self.function.blocks[i];
+        if current_block.terminator.is_none() {
+            current_block.terminator = Some(term);
         }
     }
 
@@ -363,47 +383,6 @@ impl<'g> MirFuncBuilder<'g> {
             .rev()
             .find_map(|map| map.get(name))
             .copied()
-    }
-
-    fn convert_ref(&mut self, node: &Traced<AstNode>) -> Option<Value> {
-        let val = self.convert_expr(node)?;
-        match val {
-            Value::Copy(place) => Some(Value::Ref(place)),
-            val => {
-                let ty = self.deduce_val_ty(&val).unwrap().into_owned();
-                let temp_var = self.make_temp_var(ty);
-                let temp_var_place = Place::no_projection(temp_var);
-                self.add_stmt(Statement::Assign(temp_var_place.clone(), val));
-                Some(Value::Ref(temp_var_place))
-            }
-        }
-    }
-
-    fn convert_deref(&mut self, node: &Traced<AstNode>) -> Option<Value> {
-        let val = self.convert_expr(node)?;
-        let place = match val {
-            Value::Copy(mut place) => {
-                if self
-                    .deduce_place_ty(&place)
-                    .map_or(true, |t| !t.is_ref() && !t.is_ptr())
-                {
-                    ErrorContent::InvalidDeref
-                        .wrap(node.src_loc())
-                        .collect_into(&self.global.err_collector);
-                    return None;
-                }
-                place.projections.push(ProjectionEle::Deref);
-                place
-            }
-            Value::Ref(place) => place,
-            _ => {
-                ErrorContent::InvalidDeref
-                    .wrap(node.src_loc())
-                    .collect_into(&self.global.err_collector);
-                return None;
-            }
-        };
-        Some(Value::Copy(place))
     }
 }
 

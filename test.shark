@@ -1,8 +1,4 @@
-fn f() -> &i32 {
-}
-
 fn main() {
     let x: i32 = 10;
-    let y = & &x;
-    return;
+    x = return;
 }
