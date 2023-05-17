@@ -1,7 +1,12 @@
-fn f(x: i32) {
-}
-
+fn f() -> i32 { return 10; }
+fn g() -> i32 { return 10; }
 fn main() {
-    let x: i32 = true;
-    return 1;
+    let a: i32;
+    let x = &a;
+    if true {
+        *x = f();
+    } else {
+        *x = g();
+    };
+    return;
 }

@@ -32,7 +32,7 @@ pub struct MirFunction {
     pub blocks: IndexVec<BlockRef, Block>,
 }
 
-#[derive(Debug, Clone, Default)]
+#[derive(Clone, Default)]
 pub struct Block {
     pub body: IndexVec<StatementRef, Statement>,
     pub terminator: Option<Terminator>,
@@ -49,7 +49,7 @@ impl index_vec::Idx for BlockRef {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub enum Statement {
     Assign(Place, Value),
     StaticCall {
@@ -142,13 +142,11 @@ impl index_vec::Idx for Variable {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub enum Terminator {
     Jmp(BlockRef),
     CondJmp {
-        cond: CmpKind,
-        lhs: Value,
-        rhs: Value,
+        cond: Condition,
         target: BlockRef,
         otherwise: BlockRef,
     },
@@ -156,14 +154,31 @@ pub enum Terminator {
     Unreachable,
 }
 
-#[derive(Debug, Clone)]
-pub enum CmpKind {
-    Ne,
-    Eq,
-    Gr,
-    Le,
-    GrEq,
-    LeEq,
+#[derive(Clone)]
+pub struct Condition {
+    cond_kind: CondKind,
+    val: Value,
+}
+
+impl Condition {
+    pub fn if_true(val: Value) -> Self {
+        Self {
+            cond_kind: CondKind::IfTrue,
+            val,
+        }
+    }
+    pub fn if_false(val: Value) -> Self {
+        Self {
+            cond_kind: CondKind::IfFalse,
+            val,
+        }
+    }
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum CondKind {
+    IfTrue,
+    IfFalse,
 }
 
 impl Debug for BlockRef {
@@ -217,14 +232,6 @@ impl Debug for Value {
     }
 }
 
-/// A format "functor" for showing a variable table inside a function
-struct VarsFormatter<'short>(&'short IndexVec<Variable, VarInfo>);
-impl<'short> Debug for VarsFormatter<'short> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_map().entries(self.0.iter_enumerated()).finish()
-    }
-}
-
 impl Debug for VarInfo {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         if self.is_mut {
@@ -240,11 +247,98 @@ impl Debug for VarInfo {
     }
 }
 
+/// A format "functor" for showing a variable table inside a function
+struct VarsFormatter<'short>(&'short IndexVec<Variable, VarInfo>);
+impl<'short> Debug for VarsFormatter<'short> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_map().entries(self.0.iter_enumerated()).finish()
+    }
+}
+
+/// A format "functor" for showing blocks inside a function
+struct BlocksFormatter<'short>(&'short IndexVec<BlockRef, Block>);
+impl<'short> Debug for BlocksFormatter<'short> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_map().entries(self.0.iter_enumerated()).finish()
+    }
+}
+
+impl Debug for Block {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let terminator: &dyn Debug = match &self.terminator {
+            Some(terminator) => terminator,
+            None => &DotDotDot,
+        };
+        f.debug_list()
+            .entries(self.body.iter())
+            .entry(terminator)
+            .finish()
+    }
+}
+
 impl Debug for MirFunction {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("MirFunction")
             .field("vars", &VarsFormatter(&self.vars))
-            .field("blocks", &self.blocks)
+            .field("blocks", &BlocksFormatter(&self.blocks))
             .finish()
+    }
+}
+
+impl Debug for Statement {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Assign(lhs, rhs) => write!(f, "{:?} = {:?}", lhs, rhs),
+            Self::StaticCall {
+                func_name,
+                args,
+                result,
+            } => {
+                write!(f, "{:?} = static_call {}(", result, func_name)?;
+                for arg in args {
+                    write!(f, "{:?},", arg)?;
+                }
+                write!(f, ")")
+            }
+            Self::DynCall => write!(f, "{{TODO: dyn call}}"),
+            Self::Nop => write!(f, "NOP"),
+        }
+    }
+}
+
+impl Debug for CondKind {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::IfTrue => write!(f, "if_true"),
+            Self::IfFalse => write!(f, "if_false"),
+        }
+    }
+}
+
+impl Debug for Condition {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{:?}({:?})", self.cond_kind, self.val)
+    }
+}
+
+impl Debug for Terminator {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Jmp(target) => write!(f, "jmp {:?}", target),
+            Self::CondJmp {
+                cond,
+                target,
+                otherwise,
+            } => write!(f, "jmp {:?} ? {:?} : {:?}", cond, target, otherwise),
+            Self::Return(val) => write!(f, "ret {:?}", val),
+            Self::Unreachable => write!(f, "UNREACHABLE"),
+        }
+    }
+}
+
+struct DotDotDot;
+impl Debug for DotDotDot {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "...")
     }
 }

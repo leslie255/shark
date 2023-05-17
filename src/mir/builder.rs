@@ -5,7 +5,7 @@ use index_vec::IndexVec;
 use crate::{
     ast::{
         type_expr::{NumericType, TypeExpr},
-        Ast, AstNode, AstNodeRef, Signature,
+        Ast, AstNode, AstNodeRef, IfExpr, Signature,
     },
     error::{
         location::{SourceLocation, Traced},
@@ -16,7 +16,7 @@ use crate::{
 };
 
 use super::{
-    typecheck, Block, BlockRef, MirFunction, MirObject, Place, ProjectionEle, Statement,
+    typecheck, Block, BlockRef, Condition, MirFunction, MirObject, Place, ProjectionEle, Statement,
     Terminator, Value, VarInfo, Variable,
 };
 
@@ -24,8 +24,12 @@ use super::{
 /// User of the builder is expected to call `MirFuncBuilder::make_signature` to construct this
 /// builder, and then feed it with AST nodes by calling `MirFuncBuilder::next_stmt`, and then call
 /// `MirFuncBuilder::finish` to finally yield the built `MirFunction`.
-/// The `convert_*` functions returns `None` on syntax error or unreachable code, they are not
-/// meant to be called from outside.
+/// The builder uses the `convert_*` functions to recursively visits through the AST to build the
+/// MIR. These functions are not meant to be called from outside.
+/// The `convert_*` functions return `None` on syntax error or unreachable code, or `Some(value)`
+/// for the result value of the expression. In some cases the value is always the same, such as a
+/// `let` expression always returns void, but `convert_let` is still in the same format as other
+/// `convert_*` functions.
 #[derive(Debug, Clone)]
 struct MirFuncBuilder<'g> {
     /// The global context
@@ -85,17 +89,19 @@ impl<'g> MirFuncBuilder<'g> {
 
     /// Feed the builder with the next statement inside the function
     fn next_stmt(&mut self, node: &Traced<AstNode>) {
-        let val = self.convert_expr(node);
-        let val = match val {
-            Some(x) => x,
-            None => return,
-        };
+        self.convert_stmt(node);
+    }
+
+    fn convert_stmt(&mut self, node: &Traced<AstNode>) -> Option<Value> {
+        let val = self.convert_expr(node)?;
         if !self.deduce_val_ty(&val).map_or(true, |t| t.is_trivial()) {
             ErrorContent::UnusedValue
                 .wrap(node.src_loc())
                 .collect_into(&self.global.err_collector);
-            return;
+            self.set_term(Terminator::Unreachable);
+            return None;
         }
+        Some(Value::Void)
     }
 
     fn convert_expr(&mut self, node: &Traced<AstNode>) -> Option<Value> {
@@ -139,7 +145,7 @@ impl<'g> MirFuncBuilder<'g> {
             AstNode::Deref(node) => self.convert_deref(&node),
             AstNode::Block(_) => todo!(),
             AstNode::FnDef(_) => todo!(),
-            AstNode::If(_) => todo!(),
+            AstNode::If(if_expr) => self.convert_if(if_expr, node.src_loc()),
             AstNode::Loop(_) => todo!(),
             AstNode::Return(child) => self.convert_return(child.as_deref(), node.src_loc()),
             AstNode::Break => todo!(),
@@ -348,6 +354,62 @@ impl<'g> MirFuncBuilder<'g> {
         Some(Value::Copy(place))
     }
 
+    fn convert_if(&mut self, if_expr: &IfExpr, _src_loc: SourceLocation) -> Option<Value> {
+        let mut branches = Vec::<BlockRef>::with_capacity(if_expr.if_blocks.len() + 1);
+        let mut prev_otherwise = self.current_block;
+        for (cond_node, body) in &if_expr.if_blocks {
+            let cond = self
+                .if_condition(&cond_node)
+                .unwrap_or(Condition::if_true(Value::Unreachable));
+            let target = self.new_block_owned_by_current();
+            let otherwise = self.new_block_owned_by_current();
+            self.switch_to_block(prev_otherwise);
+            self.set_term(Terminator::CondJmp {
+                cond,
+                target,
+                otherwise,
+            });
+
+            self.switch_to_block(target);
+            for stmt in body {
+                self.convert_stmt(&stmt);
+            }
+
+            branches.push(target);
+            prev_otherwise = otherwise;
+        }
+        let merged_block = match &if_expr.else_block {
+            Some(body) => {
+                self.switch_to_block(prev_otherwise);
+                for stmt in body {
+                    self.convert_stmt(&stmt);
+                }
+                branches.push(prev_otherwise);
+                self.new_block()
+            }
+            None => prev_otherwise,
+        };
+        for branch in branches {
+            self.set_term_for_block(branch, Terminator::Jmp(merged_block));
+        }
+        self.switch_to_block(merged_block);
+        Some(Value::Void) // TODO: block tails
+    }
+
+    /// Translates the if condition to an MIR condition
+    fn if_condition(&mut self, cond_node: &Traced<AstNode>) -> Option<Condition> {
+        match cond_node.deref() {
+            AstNode::BoolNot(node) => {
+                let val = self.convert_expr(&node)?;
+                Some(Condition::if_false(val))
+            }
+            _ => {
+                let val = self.convert_expr(cond_node)?;
+                Some(Condition::if_true(val))
+            }
+        }
+    }
+
     /// Deduce the type of a `Value`, returns `None` if there is a type error (does not report the
     /// type error)
     fn deduce_val_ty<'a>(&'a self, val: &'a Value) -> Option<Cow<'a, TypeExpr>> {
@@ -415,6 +477,14 @@ impl<'g> MirFuncBuilder<'g> {
         }
     }
 
+    /// Set the terminator for a specified block if it's not already set
+    fn set_term_for_block(&mut self, blockr: BlockRef, term: Terminator) {
+        let block = &mut self.function.blocks[blockr];
+        if block.terminator.is_none() {
+            block.terminator = Some(term);
+        }
+    }
+
     /// Find a local variable from its name
     fn find_local(&self, name: &str) -> Option<Variable> {
         self.locals
@@ -422,6 +492,33 @@ impl<'g> MirFuncBuilder<'g> {
             .rev()
             .find_map(|map| map.get(name))
             .copied()
+    }
+
+    /// For creating a block which has only one predecessor of the current block, use
+    /// `new_block_owned_by_current`
+    fn new_block(&mut self) -> BlockRef {
+        let block = Block::default();
+        self.function.blocks.push(block)
+    }
+
+    /// Creates a new block which has only one predecessor which is the current block.
+    /// If the current block is already unreachable then it propagates to this new block.
+    fn new_block_owned_by_current(&mut self) -> BlockRef {
+        let mut block = Block::default();
+        if self.current_block().terminator.is_some() {
+            block.terminator = Some(Terminator::Unreachable);
+        }
+        self.function.blocks.push(block)
+    }
+
+    fn switch_to_block(&mut self, block: BlockRef) {
+        self.current_block = block;
+    }
+
+    /// Get an immutable reference to the current block.
+    fn current_block(&self) -> &Block {
+        let i = self.current_block;
+        &self.function.blocks[i]
     }
 
     /// Performs a co-variant type check.
