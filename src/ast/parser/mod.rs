@@ -321,7 +321,6 @@ impl AstParser {
                 Token::Exc => {
                     let (child, loc) = unary!(precedence = 2);
                     node = AstNode::BoolNot(child).traced(loc);
-                    continue;
                 }
                 _ => {
                     ErrorContent::UnexpectedToken
