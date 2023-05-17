@@ -38,6 +38,9 @@ struct MirFuncBuilder<'g> {
     /// The MIR function this builder is constructing
     function: MirFunction,
 
+    /// The source location of the function, used for reporting missing returns
+    source_loc: SourceLocation,
+
     /// Return type of the function
     ret_ty: TypeExpr,
 
@@ -56,7 +59,11 @@ struct MirFuncBuilder<'g> {
 
 impl<'g> MirFuncBuilder<'g> {
     /// Initialize the builder
-    fn make_signature(global: &'g GlobalContext, sign: &Signature) -> Self {
+    fn make_signature(
+        global: &'g GlobalContext,
+        sign: &Signature,
+        source_loc: SourceLocation,
+    ) -> Self {
         let mut vars = IndexVec::<Variable, VarInfo>::with_capacity(sign.args.len());
         let mut locals = Vec::<HashMap<&'static str, Variable>>::new();
         locals.push(HashMap::new());
@@ -77,14 +84,32 @@ impl<'g> MirFuncBuilder<'g> {
                 blocks: IndexVec::from_iter([Block::default()]),
                 vars,
             },
+            source_loc,
             current_block: BlockRef(0),
             ret_ty: sign.ret_type.clone(),
             locals,
         }
     }
 
-    fn finish(self) -> MirFunction {
-        self.function
+    fn finish(mut self) -> MirFunction {
+        // return check
+        match (
+            self.current_block().terminator.is_some(),
+            self.ret_ty.is_void(),
+        ) {
+            (true, _) => self.function,
+            (false, true) => {
+                self.set_term(Terminator::Return(Value::Void));
+                self.function
+            }
+            (false, false) => {
+                self.set_term(Terminator::Unreachable);
+                ErrorContent::MissingReturn
+                    .wrap(self.source_loc)
+                    .collect_into(&self.global.err_collector);
+                self.function
+            }
+        }
     }
 
     /// Feed the builder with the next statement inside the function
@@ -564,7 +589,8 @@ pub fn make_mir<'g>(global: &'g GlobalContext, ast: &'g Ast) -> MirObject {
         match root_node.inner() {
             AstNode::FnDef(ast_func) => match &ast_func.body {
                 Some(body) => {
-                    let mut builder = MirFuncBuilder::make_signature(global, &ast_func.sign);
+                    let mut builder =
+                        MirFuncBuilder::make_signature(global, &ast_func.sign, root_node.src_loc());
                     for node in body {
                         builder.next_stmt(&node);
                     }

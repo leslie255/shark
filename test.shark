@@ -1,12 +1,10 @@
-fn f() -> i32 { return 10; }
-fn g() -> i32 { return 10; }
+fn id(x: i32) -> i32 { return x; }
 fn main() {
     let a: i32;
     let x = &a;
     if true {
-        *x = f();
+        *x = id(255);
     } else {
-        *x = g();
+        *x = 12;
     };
-    return;
 }

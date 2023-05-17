@@ -99,6 +99,7 @@ pub enum ErrorContent {
     UnusedValue,
     TypeInferFailed,
     InvalidDeref,
+    MissingReturn,
 
     Todo(&'static str),
 }
@@ -153,6 +154,7 @@ impl ErrorContent {
             Self::UnusedValue => "unused value",
             Self::TypeInferFailed => "unable to infer type of variable",
             Self::InvalidDeref => "expression cannot be dereferenced",
+            Self::MissingReturn => "missing return",
             Self::Todo(..) => "compiler todo",
         }
     }
@@ -234,6 +236,7 @@ impl ErrorContent {
             }
             Self::TypeInferFailed => "Try specifying a type for this variable".to_string(),
             Self::InvalidDeref => "Only pointers or references could be de-referenced".to_string(),
+            Self::MissingReturn => "This function is missing a return value".to_string(),
             Self::Todo(msg) => format!("TODO: {}", msg),
         }
     }
