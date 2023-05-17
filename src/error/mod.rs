@@ -1,5 +1,6 @@
 pub mod location;
 
+use std::borrow::Cow;
 use std::cell::RefCell;
 use std::fmt::Display;
 
@@ -10,39 +11,15 @@ use crate::{buffered_content::BufferedContent, token::Token};
 
 use crate::term_color;
 
-// fuck english
-trait IsZeroOrOne
-where
-    Self: Copy,
-{
-    fn is_0_or_1(self) -> bool;
-}
-
-// only natural numbers (unsigned integers) can meaningfully be plural or singular
-macro_rules! impl_is_zero_or_one_for_uint {
-    ($T:ty) => {
-        impl IsZeroOrOne for $T {
-            fn is_0_or_1(self) -> bool {
-                matches!(self, 0 | 1)
-            }
-        }
-    };
-}
-impl_is_zero_or_one_for_uint!(usize);
-impl_is_zero_or_one_for_uint!(u64);
-impl_is_zero_or_one_for_uint!(u32);
-impl_is_zero_or_one_for_uint!(u16);
-impl_is_zero_or_one_for_uint!(u8);
-
-struct MaybePlural<T: IsZeroOrOne> {
-    n: T,
+struct MaybePlural<N: PartialOrd + From<u8>> {
+    n: N,
     s: &'static str,
     p: &'static str,
 }
 
-impl<T: IsZeroOrOne> Display for MaybePlural<T> {
+impl<N: PartialOrd + From<u8>> Display for MaybePlural<N> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        if self.n.is_0_or_1() {
+        if self.n <= 1u8.into() {
             self.s.fmt(f)
         } else {
             self.p.fmt(f)
@@ -51,12 +28,12 @@ impl<T: IsZeroOrOne> Display for MaybePlural<T> {
 }
 
 /// Formats to "s" if the given number is plural, otherwise formats to ""
-fn add_s_if_plural(n: impl IsZeroOrOne) -> impl Display {
+fn add_s_if_plural(n: impl PartialOrd + From<u8>) -> impl Display {
     MaybePlural { n, s: "", p: "s" }
 }
 
 /// Formats to "are" if the given number is plural, otherwise formats to "is"
-fn is_or_are(n: impl IsZeroOrOne) -> impl Display {
+fn is_or_are(n: impl PartialOrd + From<u8>) -> impl Display {
     MaybePlural {
         n,
         s: "is",
@@ -234,10 +211,12 @@ impl ErrorContent {
             &Self::FuncNotExist(name) => format!("The function `{}` doesn't exist", name),
             &Self::MismatchedArgsCount(name, expected, provided) => {
                 format!(
-                    "`{}` takes in {} argument{}, but only {} {} provided",
-                    name.unwrap_or("the function"),
+                    "{} takes in {} argument{}, but{} {} {} provided",
+                    name.map(|s| Cow::Owned(format!("`{}`", s)))
+                        .unwrap_or(Cow::Borrowed("the function")),
                     expected,
                     add_s_if_plural(expected),
+                    if provided < expected { " only" } else { "" },
                     provided,
                     is_or_are(provided),
                 )

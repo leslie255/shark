@@ -1,4 +1,7 @@
+fn f(x: i32) {
+}
+
 fn main() {
-    let x: i32 = 10;
-    x = return;
+    let x: i32 = true;
+    return 1;
 }

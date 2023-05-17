@@ -1,16 +1,7 @@
 use crate::{
-    ast::{
-        type_expr::{self, NumericType, TypeExpr},
-        Ast, AstNode, AstNodeRef, Function,
-    },
-    error::{
-        location::{SourceLocation, Traced},
-        CollectIfErr, ErrorContent,
-    },
-    token::NumValue,
+    ast::type_expr::{NumericType, TypeExpr},
+    gen::GlobalContext,
 };
-
-use super::{clif_types, trans_ty, ClifType, GlobalContext};
 
 pub static ANY_NUMERIC: TypeExpr = TypeExpr::_UnknownNumeric(NumericType::new());
 

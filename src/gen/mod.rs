@@ -15,7 +15,6 @@ use cranelift_codegen::{
 };
 
 mod context;
-mod typecheck;
 mod value;
 
 use cranelift_frontend::{FunctionBuilder, FunctionBuilderContext, Variable};

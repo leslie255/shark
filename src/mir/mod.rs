@@ -1,4 +1,5 @@
 pub mod builder;
+pub mod typecheck;
 
 use std::fmt::Debug;
 
@@ -79,8 +80,8 @@ impl index_vec::Idx for StatementRef {
 /// ```
 ///
 /// These expressions can be used as LHS of assignments, or they can be also used to yield a value
-/// from (a.k.a. converting an lvalue to an rvalue), either by copy or reference, the latter is
-/// represented by wrapping it inside `Value::Copy` or `Value::Ref`.
+/// from (a.k.a. converting an lvalue to an rvalue), the latter is represented by wrapping it
+/// inside a `Value::Copy` or `Value::Ref` for by-copy or by-ref, respectively.
 ///
 /// A place is made from two parts. A local variable as its root (`local`), and some "decorators"
 /// (`projections`) on it.

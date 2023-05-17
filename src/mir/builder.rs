@@ -16,8 +16,8 @@ use crate::{
 };
 
 use super::{
-    Block, BlockRef, MirFunction, MirObject, Place, ProjectionEle, Statement, Terminator, Value,
-    VarInfo, Variable,
+    typecheck, Block, BlockRef, MirFunction, MirObject, Place, ProjectionEle, Statement,
+    Terminator, Value, VarInfo, Variable,
 };
 
 /// Contains states needed for the building of a MIR function.
@@ -85,12 +85,12 @@ impl<'g> MirFuncBuilder<'g> {
 
     /// Feed the builder with the next statement inside the function
     fn next_stmt(&mut self, node: &Traced<AstNode>) {
-        let oper = self.convert_expr(node);
-        let oper = match oper {
+        let val = self.convert_expr(node);
+        let val = match val {
             Some(x) => x,
             None => return,
         };
-        if !self.deduce_val_ty(&oper).map_or(true, |t| t.is_trivial()) {
+        if !self.deduce_val_ty(&val).map_or(true, |t| t.is_trivial()) {
             ErrorContent::UnusedValue
                 .wrap(node.src_loc())
                 .collect_into(&self.global.err_collector);
@@ -166,16 +166,35 @@ impl<'g> MirFuncBuilder<'g> {
             .ok_or(ErrorContent::FuncNotExist(func_name).wrap(callee.src_loc()))
             .collect_err(&self.global.err_collector)?
             .sig;
-        let mut arg_opers = Vec::<Value>::with_capacity(args.len());
+        let mut arg_vals = Vec::<Value>::with_capacity(args.len());
         let result_var = self.make_temp_var(func_sig.ret_type.clone());
         let result_place = Place::no_projection(result_var);
-        for arg in args {
-            let arg_oper = self.convert_expr(&arg)?;
-            arg_opers.push(arg_oper);
+
+        // check arguments count
+        if args.len() != func_sig.args.len() {
+            ErrorContent::MismatchedArgsCount(Some(func_name), func_sig.args.len(), args.len())
+                .wrap(callee.src_loc())
+                .collect_into(&self.global.err_collector);
+            self.set_term(Terminator::Unreachable);
+            // still dry runs builder on argument nodes
+            for arg in args {
+                let arg_val = self.convert_expr(&arg)?;
+                arg_vals.push(arg_val);
+            }
+            return None;
         }
+
+        for (i, arg) in args.iter().enumerate() {
+            let arg = arg.deref();
+            let expect_ty = unsafe { &func_sig.args.get_unchecked(i).1 };
+            let arg_val = self.convert_expr(arg)?;
+            self.typecheck_covary(expect_ty, &arg_val, arg.src_loc());
+            arg_vals.push(arg_val);
+        }
+
         let call_stmt = Statement::StaticCall {
             func_name,
-            args: arg_opers,
+            args: arg_vals,
             result: result_place.clone(),
         };
         self.add_stmt(call_stmt);
@@ -208,29 +227,37 @@ impl<'g> MirFuncBuilder<'g> {
             return None;
         }
 
-        let rhs_oper = self.convert_expr(rhs.as_deref()?)?;
-        if ty.is_none() {
-            let infered = self
-                .deduce_val_ty(&rhs_oper)
-                .ok_or(ErrorContent::TypeInferFailed.wrap(lhs.src_loc()))
-                .collect_err(&self.global.err_collector)?
-                .into_owned();
-            if !infered.is_concrete() {
-                ErrorContent::Todo("Partial type infer")
-                    .wrap(lhs.src_loc())
-                    .collect_into(&self.global.err_collector);
-                self.set_term(Terminator::Unreachable);
+        let rhs = rhs.as_deref()?;
+        let rhs_val = self.convert_expr(rhs)?;
+        match ty {
+            None => {
+                let infered = self
+                    .deduce_val_ty(&rhs_val)
+                    .ok_or(ErrorContent::TypeInferFailed.wrap(lhs.src_loc()))
+                    .collect_err(&self.global.err_collector)?
+                    .into_owned();
+                if !infered.is_concrete() {
+                    ErrorContent::Todo("Partial type infer")
+                        .wrap(lhs.src_loc())
+                        .collect_into(&self.global.err_collector);
+                    self.set_term(Terminator::Unreachable);
+                }
+                self.function.vars[var].ty = infered;
             }
-            self.function.vars[var].ty = infered;
+            Some(ty) => {
+                self.typecheck_covary(ty, &rhs_val, rhs.src_loc());
+            }
         }
 
-        self.add_stmt(Statement::Assign(Place::no_projection(var), rhs_oper));
+        self.add_stmt(Statement::Assign(Place::no_projection(var), rhs_val));
 
         Some(Value::Void)
     }
 
     fn convert_assign(&mut self, lhs: &Traced<AstNode>, rhs: &Traced<AstNode>) -> Option<Value> {
         let lhs_val = self.convert_expr(lhs)?;
+        let rhs_val = self.convert_expr(&rhs)?;
+        self.typecheck_covary_val_val(&lhs_val, &rhs_val, rhs.src_loc());
         let lhs_place = match lhs_val {
             Value::Copy(place) => place,
             _ => {
@@ -240,8 +267,7 @@ impl<'g> MirFuncBuilder<'g> {
                 return None;
             }
         };
-        let rhs_oper = self.convert_expr(&rhs)?;
-        self.add_stmt(Statement::Assign(lhs_place, rhs_oper));
+        self.add_stmt(Statement::Assign(lhs_place, rhs_val));
         Some(Value::Void)
     }
 
@@ -263,8 +289,21 @@ impl<'g> MirFuncBuilder<'g> {
                 return None;
             }
         };
-        let oper = self.convert_expr(child)?;
-        self.set_term(Terminator::Return(oper));
+        let val = self.convert_expr(child)?;
+        // type check the return value
+        {
+            let loc = child.src_loc();
+            let found_ty = self
+                .deduce_val_ty(&val)
+                .unwrap_or(Cow::Owned(TypeExpr::_Unknown));
+            if !typecheck::type_matches(self.global, &self.ret_ty, &found_ty) {
+                ErrorContent::MismatchdTypes((&self.ret_ty).clone(), found_ty.into_owned())
+                    .wrap(loc)
+                    .collect_into(&self.global.err_collector);
+                self.set_term(Terminator::Unreachable);
+            }
+        }
+        self.set_term(Terminator::Return(val));
         return None;
     }
 
@@ -383,6 +422,41 @@ impl<'g> MirFuncBuilder<'g> {
             .rev()
             .find_map(|map| map.get(name))
             .copied()
+    }
+
+    /// Performs a co-variant type check.
+    /// Generates and reports the error if needed.
+    /// Terminates the current block if type check not passed.
+    fn typecheck_covary(&mut self, expect: &TypeExpr, found: &Value, loc: SourceLocation) {
+        let found = self
+            .deduce_val_ty(found)
+            .unwrap_or(Cow::Owned(TypeExpr::_Unknown));
+        if !typecheck::type_matches(self.global, expect, &found) {
+            ErrorContent::MismatchdTypes(expect.clone(), found.into_owned())
+                .wrap(loc)
+                .collect_into(&self.global.err_collector);
+            self.set_term(Terminator::Unreachable);
+        }
+    }
+
+    /// Performs a co-variant type check between two values.
+    /// Generates and reports the error if needed.
+    /// Terminates the current block if type check not passed.
+    fn typecheck_covary_val_val(&mut self, expect: &Value, found: &Value, loc: SourceLocation) {
+        let expect = self
+            .deduce_val_ty(expect)
+            .unwrap_or(Cow::Owned(TypeExpr::_Unknown));
+        let expect: &TypeExpr = &expect;
+        let found = found;
+        let found = self
+            .deduce_val_ty(found)
+            .unwrap_or(Cow::Owned(TypeExpr::_Unknown));
+        if !typecheck::type_matches(self.global, expect, &found) {
+            ErrorContent::MismatchdTypes(expect.clone(), found.into_owned())
+                .wrap(loc)
+                .collect_into(&self.global.err_collector);
+            self.set_term(Terminator::Unreachable);
+        };
     }
 }
 
