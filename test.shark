@@ -6,5 +6,7 @@ fn main() {
         *x = id(255);
     } else if true {
         *x = 10;
+    }
+    if 0 {
     };
 }

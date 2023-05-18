@@ -161,15 +161,12 @@ pub struct Condition {
 }
 
 impl Condition {
-    pub fn if_true(val: Value) -> Self {
+    pub const fn new(cond_kind: CondKind, val: Value) -> Self {
+        Self { cond_kind, val }
+    }
+    pub const fn if_true(val: Value) -> Self {
         Self {
             cond_kind: CondKind::IfTrue,
-            val,
-        }
-    }
-    pub fn if_false(val: Value) -> Self {
-        Self {
-            cond_kind: CondKind::IfFalse,
             val,
         }
     }

@@ -16,8 +16,8 @@ use crate::{
 };
 
 use super::{
-    typecheck, Block, BlockRef, Condition, MirFunction, MirObject, Place, ProjectionEle, Statement,
-    Terminator, Value, VarInfo, Variable,
+    typecheck, Block, BlockRef, CondKind, Condition, MirFunction, MirObject, Place, ProjectionEle,
+    Statement, Terminator, Value, VarInfo, Variable,
 };
 
 /// Contains states needed for the building of a MIR function.
@@ -423,16 +423,12 @@ impl<'g> MirFuncBuilder<'g> {
 
     /// Translates the if condition to an MIR condition
     fn if_condition(&mut self, cond_node: &Traced<AstNode>) -> Option<Condition> {
-        match cond_node.deref() {
-            AstNode::BoolNot(node) => {
-                let val = self.convert_expr(&node)?;
-                Some(Condition::if_false(val))
-            }
-            _ => {
-                let val = self.convert_expr(cond_node)?;
-                Some(Condition::if_true(val))
-            }
-        }
+        let (cond_kind, val) = match cond_node.deref() {
+            AstNode::BoolNot(node) => (CondKind::IfFalse, self.convert_expr(node)?),
+            _ => (CondKind::IfTrue, self.convert_expr(cond_node)?),
+        };
+        self.typecheck_covary(&TypeExpr::Bool, &val, cond_node.src_loc());
+        Some(Condition::new(cond_kind, val))
     }
 
     /// Deduce the type of a `Value`, returns `None` if there is a type error (does not report the
