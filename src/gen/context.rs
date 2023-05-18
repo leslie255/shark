@@ -1,24 +1,13 @@
-use std::{
-    cell::{Ref, RefCell, RefMut},
-    collections::{hash_map::Entry, HashMap},
-    fmt::Debug,
-    ops::{Deref, Range},
-    rc::Rc,
-};
+use std::{collections::HashMap, fmt::Debug, ops::Deref, rc::Rc};
 
-use cranelift::prelude::{AbiParam, Block, EntityRef, Signature as ClifSignature};
-use cranelift_codegen::{ir::FuncRef, isa::CallConv};
-use cranelift_frontend::Variable;
-use cranelift_module::{FuncId, Linkage, Module};
-use cranelift_object::{ObjectModule, ObjectProduct};
+use cranelift::prelude::Block;
+use cranelift_module::Linkage;
 use index_vec::IndexVec;
 
 use crate::{
-    ast::{parser::AstParser, type_expr::TypeExpr, AstNode, AstNodeRef, Signature},
+    ast::{parser::AstParser, AstNode, AstNodeRef, Signature},
     error::{CollectIfErr, ErrorCollector, ErrorContent},
 };
-
-use super::trans_ty;
 
 /// Information about a function
 #[derive(Clone, Debug)]
@@ -60,6 +49,7 @@ impl index_vec::Idx for FuncIndex {
 }
 
 /// Keeps track of global symbols
+#[derive(Debug)]
 pub struct GlobalContext {
     pub funcs: IndexVec<FuncIndex, FuncInfo>,
     /// Map from function name to function index
@@ -67,14 +57,6 @@ pub struct GlobalContext {
     pub err_collector: Rc<ErrorCollector>,
 }
 
-impl Debug for GlobalContext {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("GlobalContext")
-            .field("funcs", &self.funcs)
-            .field("obj_module", &"*****" as &dyn Debug)
-            .finish()
-    }
-}
 
 impl GlobalContext {
     /// An empty global context
@@ -138,27 +120,3 @@ pub fn build_global_context(
     }
     global
 }
-
-///// Translate a function signature information to cranelift signature.
-///// Returns the clif signature, the flattened argument variables, and the flattened return type.
-//fn trans_sig(global: &GlobalContext, sig: &Signature) -> (ClifSignature, Vec<VarInfo>, FlatType) {
-//    let call_conv = CallConv::SystemV;
-//    let mut clif_sig = ClifSignature::new(call_conv);
-//    let mut args = Vec::<VarInfo>::with_capacity(sig.args.len());
-//    clif_sig.params.reserve(sig.args.len());
-//    let mut id_counter = 0usize;
-//    for (_, ty) in sig.args.iter() {
-//        let var_info = make_var_info(global, &mut id_counter, ty.clone());
-//        var_info
-//            .flat_ty()
-//            .fields()
-//            .map(AbiParam::new)
-//            .for_each(|t| clif_sig.params.push(t));
-//        args.push(var_info);
-//    }
-//    for ty in trans_ty(global, &sig.ret_type).fields() {
-//        clif_sig.returns.push(AbiParam::new(ty));
-//    }
-//    let ret_ty = super::trans_ty(global, &sig.ret_type);
-//    (clif_sig, args, ret_ty)
-//}

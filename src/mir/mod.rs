@@ -35,7 +35,7 @@ pub struct Block {
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct BlockRef(usize);
+pub struct BlockRef(pub usize);
 impl index_vec::Idx for BlockRef {
     fn from_usize(idx: usize) -> Self {
         Self(idx)
@@ -240,7 +240,7 @@ impl Debug for VarInfo {
     }
 }
 
-/// A format "functor" for showing blocks inside a function
+/// A format "functor" for displaying an `IndexVec` as key-value pairs
 struct IndexVecFormatter<'short, I: Debug + index_vec::Idx, T: Debug>(&'short IndexVec<I, T>);
 impl<'short, I: Debug + index_vec::Idx, T: Debug> Debug for IndexVecFormatter<'short, I, T> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {

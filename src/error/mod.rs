@@ -266,44 +266,52 @@ impl ErrorCollector {
         self.errors.borrow_mut().push(e);
     }
     /// Print the errors in it's final presentation format, and remove all the errors
-    pub fn print_and_dump_all(&self, sources: &BufferedContent) {
+    /// If there are no errors, returns `false`, otherwise returns `true`
+    pub fn print_and_dump_all(&self, sources: &BufferedContent) -> bool {
         // TODO: If multiple errors happen in one line, print them in one block
-        let mut current_filename = "";
-        let mut current_file_content = "";
-        for error in self.errors.borrow().iter() {
-            // TODO: this is really inefficient since it has to iterate from the beginning of the
-            // file for every error, but optimize it later lol
-            let mut line_num = 0usize;
-            let mut line_start: usize;
-            let mut line_end = 0usize;
-            let error_filename = error.location.file_name;
-            if current_filename != error_filename {
-                current_filename = error_filename;
-                current_file_content = sources.read_file(current_filename).as_str();
+        {
+            let errors = self.errors.borrow();
+            if errors.is_empty() {
+                return false;
             }
-            for (i, ch) in current_file_content.char_indices() {
-                line_num += 1;
-                if ch == '\n' {
-                    line_start = line_end;
-                    line_end = i;
-                    let error_range = error.location.range;
-                    if line_start <= error_range.0 && line_end >= error_range.1 {
-                        let len = error_range.1 - error_range.0;
-                        let col_num = error_range.0 - line_start;
-                        print_err(
-                            error,
-                            current_file_content,
-                            line_start,
-                            line_end,
-                            line_num,
-                            col_num,
-                            len,
-                        );
+            let mut current_filename = "";
+            let mut current_file_content = "";
+            for error in errors.iter() {
+                // TODO: this is really inefficient since it has to iterate from the beginning of the
+                // file for every error, but optimize it later lol
+                let mut line_num = 0usize;
+                let mut line_start: usize;
+                let mut line_end = 0usize;
+                let error_filename = error.location.file_name;
+                if current_filename != error_filename {
+                    current_filename = error_filename;
+                    current_file_content = sources.read_file(current_filename).as_str();
+                }
+                for (i, ch) in current_file_content.char_indices() {
+                    line_num += 1;
+                    if ch == '\n' {
+                        line_start = line_end;
+                        line_end = i;
+                        let error_range = error.location.range;
+                        if line_start <= error_range.0 && line_end >= error_range.1 {
+                            let len = error_range.1 - error_range.0;
+                            let col_num = error_range.0 - line_start;
+                            print_err(
+                                error,
+                                current_file_content,
+                                line_start,
+                                line_end,
+                                line_num,
+                                col_num,
+                                len,
+                            );
+                        }
                     }
                 }
             }
         }
-        self.errors.borrow_mut().clear()
+        self.errors.borrow_mut().clear();
+        true
     }
 }
 
