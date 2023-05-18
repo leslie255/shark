@@ -5,18 +5,14 @@ use std::fmt::Debug;
 
 use index_vec::IndexVec;
 
-use crate::{
-    ast::{type_expr::TypeExpr, Signature},
-    token::NumValue,
-};
+use crate::{ast::type_expr::TypeExpr, gen::context::FuncIndex, token::NumValue};
 
 // all variables listed in function head
 // control flow is in SSA-style CFG but variables can be mutable
 
-#[derive(Debug, Clone, Default)]
+#[derive(Clone, Default)]
 pub struct MirObject {
-    pub imported_functions: Vec<Signature>,
-    pub functions: Vec<MirFunction>,
+    pub functions: IndexVec<FuncIndex, MirFunction>,
 }
 
 #[derive(Clone)]
@@ -53,7 +49,7 @@ impl index_vec::Idx for BlockRef {
 pub enum Statement {
     Assign(Place, Value),
     StaticCall {
-        func_name: &'static str,
+        func_idx: FuncIndex,
         args: Vec<Value>,
         result: Place,
     },
@@ -244,17 +240,9 @@ impl Debug for VarInfo {
     }
 }
 
-/// A format "functor" for showing a variable table inside a function
-struct VarsFormatter<'short>(&'short IndexVec<Variable, VarInfo>);
-impl<'short> Debug for VarsFormatter<'short> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_map().entries(self.0.iter_enumerated()).finish()
-    }
-}
-
 /// A format "functor" for showing blocks inside a function
-struct BlocksFormatter<'short>(&'short IndexVec<BlockRef, Block>);
-impl<'short> Debug for BlocksFormatter<'short> {
+struct IndexVecFormatter<'short, I: Debug + index_vec::Idx, T: Debug>(&'short IndexVec<I, T>);
+impl<'short, I: Debug + index_vec::Idx, T: Debug> Debug for IndexVecFormatter<'short, I, T> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_map().entries(self.0.iter_enumerated()).finish()
     }
@@ -276,8 +264,8 @@ impl Debug for Block {
 impl Debug for MirFunction {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("MirFunction")
-            .field("vars", &VarsFormatter(&self.vars))
-            .field("blocks", &BlocksFormatter(&self.blocks))
+            .field("vars", &IndexVecFormatter(&self.vars))
+            .field("blocks", &IndexVecFormatter(&self.blocks))
             .finish()
     }
 }
@@ -287,11 +275,11 @@ impl Debug for Statement {
         match self {
             Self::Assign(lhs, rhs) => write!(f, "{:?} = {:?}", lhs, rhs),
             Self::StaticCall {
-                func_name,
+                func_idx,
                 args,
                 result,
             } => {
-                write!(f, "{:?} = static_call {}(", result, func_name)?;
+                write!(f, "{:?} = static_call {:?}(", result, func_idx)?;
                 for arg in args {
                     write!(f, "{:?},", arg)?;
                 }
@@ -337,5 +325,13 @@ struct DotDotDot;
 impl Debug for DotDotDot {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "...")
+    }
+}
+
+impl Debug for MirObject {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("MirObject")
+            .field("functions", &IndexVecFormatter(&self.functions))
+            .finish()
     }
 }

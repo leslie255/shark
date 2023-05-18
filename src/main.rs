@@ -27,11 +27,11 @@ fn main() {
     let buffers = Rc::new(BufferedContent::default());
     let err_collector = Rc::new(ErrorCollector::default());
     let mut ast_parser = AstParser::new(&file_name, Rc::clone(&buffers), Rc::clone(&err_collector));
-    let global_context = gen::build_global_context(&mut ast_parser, Rc::clone(&err_collector));
+    let global_context = gen::context::build_global_context(&mut ast_parser, Rc::clone(&err_collector));
     dbg!(&global_context);
     let ast = ast_parser.ast;
     dbg!(&ast.root_nodes);
-    let mir_object = mir::builder::make_mir(&global_context, &ast);
+    let mir_object = mir::builder::make_mir(&global_context);
     dbg!(&mir_object);
 
     //gen::compile(&mut global_context, &mir_object);

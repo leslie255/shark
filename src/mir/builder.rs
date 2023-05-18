@@ -5,13 +5,13 @@ use index_vec::IndexVec;
 use crate::{
     ast::{
         type_expr::{NumericType, TypeExpr},
-        Ast, AstNode, AstNodeRef, IfExpr, Signature,
+        AstNode, AstNodeRef, IfExpr,
     },
     error::{
         location::{SourceLocation, Traced},
         CollectIfErr, ErrorContent,
     },
-    gen::GlobalContext,
+    gen::context::{FuncIndex, FuncInfo, GlobalContext},
     token::NumValue,
 };
 
@@ -21,8 +21,8 @@ use super::{
 };
 
 /// Contains states needed for the building of a MIR function.
-/// User of the builder is expected to call `MirFuncBuilder::make_signature` to construct this
-/// builder, and then feed it with AST nodes by calling `MirFuncBuilder::next_stmt`, and then call
+/// User of the builder is expected to call `MirFuncBuilder::new` to construct this builder, and
+/// and then feed it with AST nodes by calling `MirFuncBuilder::next_stmt`, and then call
 /// `MirFuncBuilder::finish` to finally yield the built `MirFunction`.
 /// The builder uses the `convert_*` functions to recursively visits through the AST to build the
 /// MIR. These functions are not meant to be called from outside.
@@ -35,14 +35,14 @@ struct MirFuncBuilder<'g> {
     /// The global context
     global: &'g GlobalContext,
 
+    /// The func info from the global context
+    func_info: &'g FuncInfo,
+
     /// The MIR function this builder is constructing
     function: MirFunction,
 
     /// The source location of the function, used for reporting missing returns
     source_loc: SourceLocation,
-
-    /// Return type of the function
-    ret_ty: TypeExpr,
 
     /// A "cursor" pointing at the current block that the builder is writing to.
     /// Avoid directly indexing `self.function.blocks`, always use `add_stmt` and `set_term` for
@@ -59,15 +59,13 @@ struct MirFuncBuilder<'g> {
 
 impl<'g> MirFuncBuilder<'g> {
     /// Initialize the builder
-    fn make_signature(
-        global: &'g GlobalContext,
-        sign: &Signature,
-        source_loc: SourceLocation,
-    ) -> Self {
-        let mut vars = IndexVec::<Variable, VarInfo>::with_capacity(sign.args.len());
+    fn new(global: &'g GlobalContext, func_idx: FuncIndex, source_loc: SourceLocation) -> Self {
+        let func_info = &global.funcs[func_idx];
+        let sig = &func_info.sig;
+        let mut vars = IndexVec::<Variable, VarInfo>::with_capacity(sig.args.len());
         let mut locals = Vec::<HashMap<&'static str, Variable>>::new();
         locals.push(HashMap::new());
-        for (arg_name, arg_ty) in &sign.args {
+        for (arg_name, arg_ty) in &sig.args {
             let var_info = VarInfo {
                 is_mut: true,
                 ty: arg_ty.clone(),
@@ -80,13 +78,13 @@ impl<'g> MirFuncBuilder<'g> {
         }
         MirFuncBuilder {
             global,
+            func_info,
             function: MirFunction {
-                blocks: IndexVec::from_iter([Block::default()]),
                 vars,
+                blocks: IndexVec::from_iter([Block::default()]),
             },
             source_loc,
             current_block: BlockRef(0),
-            ret_ty: sign.ret_type.clone(),
             locals,
         }
     }
@@ -95,7 +93,7 @@ impl<'g> MirFuncBuilder<'g> {
         // return check
         match (
             self.current_block().terminator.is_some(),
-            self.ret_ty.is_void(),
+            self.func_info.sig.ret_type.is_void(),
         ) {
             (true, _) => self.function,
             (false, true) => {
@@ -191,12 +189,12 @@ impl<'g> MirFuncBuilder<'g> {
             .as_identifier()
             .ok_or(ErrorContent::Todo("Indirect function calls").wrap(callee.src_loc()))
             .collect_err(&self.global.err_collector)?;
-        let func_sig = &self
+        let (func_idx, func_info) = self
             .global
             .func(func_name)
             .ok_or(ErrorContent::FuncNotExist(func_name).wrap(callee.src_loc()))
-            .collect_err(&self.global.err_collector)?
-            .sig;
+            .collect_err(&self.global.err_collector)?;
+        let func_sig = &func_info.sig;
         let mut arg_vals = Vec::<Value>::with_capacity(args.len());
         let result_var = self.make_temp_var(func_sig.ret_type.clone());
         let result_place = Place::no_projection(result_var);
@@ -224,7 +222,7 @@ impl<'g> MirFuncBuilder<'g> {
         }
 
         let call_stmt = Statement::StaticCall {
-            func_name,
+            func_idx,
             args: arg_vals,
             result: result_place.clone(),
         };
@@ -310,10 +308,13 @@ impl<'g> MirFuncBuilder<'g> {
         let child = match child {
             Some(x) => x,
             None => {
-                if !self.ret_ty.is_void() {
-                    ErrorContent::MismatchdTypes(self.ret_ty.clone(), TypeExpr::void())
-                        .wrap(return_loc)
-                        .collect_into(&self.global.err_collector);
+                if !self.func_info.sig.ret_type.is_void() {
+                    ErrorContent::MismatchdTypes(
+                        self.func_info.sig.ret_type.clone(),
+                        TypeExpr::void(),
+                    )
+                    .wrap(return_loc)
+                    .collect_into(&self.global.err_collector);
                     return None;
                 }
                 self.set_term(Terminator::Return(Value::Void));
@@ -327,10 +328,13 @@ impl<'g> MirFuncBuilder<'g> {
             let found_ty = self
                 .deduce_val_ty(&val)
                 .unwrap_or(Cow::Owned(TypeExpr::_Unknown));
-            if !typecheck::type_matches(self.global, &self.ret_ty, &found_ty) {
-                ErrorContent::MismatchdTypes((&self.ret_ty).clone(), found_ty.into_owned())
-                    .wrap(loc)
-                    .collect_into(&self.global.err_collector);
+            if !typecheck::type_matches(self.global, &self.func_info.sig.ret_type, &found_ty) {
+                ErrorContent::MismatchdTypes(
+                    self.func_info.sig.ret_type.clone(),
+                    found_ty.into_owned(),
+                )
+                .wrap(loc)
+                .collect_into(&self.global.err_collector);
                 self.set_term(Terminator::Unreachable);
             }
         }
@@ -578,28 +582,20 @@ impl<'g> MirFuncBuilder<'g> {
     }
 }
 
-pub fn make_mir<'g>(global: &'g GlobalContext, ast: &'g Ast) -> MirObject {
+pub fn make_mir<'g>(global: &'g GlobalContext) -> MirObject {
     let mut mir_object = MirObject::default();
-    for root_node in &ast.root_nodes {
-        let root_node = root_node.deref();
-        match root_node.inner() {
-            AstNode::FnDef(ast_func) => match &ast_func.body {
-                Some(body) => {
-                    let mut builder =
-                        MirFuncBuilder::make_signature(global, &ast_func.sign, root_node.src_loc());
-                    for node in body {
-                        builder.next_stmt(&node);
-                    }
-                    mir_object.functions.push(builder.finish());
-                }
-                None => ErrorContent::Todo("External functions")
-                    .wrap(root_node.src_loc())
-                    .collect_into(&global.err_collector),
-            },
-            _ => ErrorContent::ExprNotAllowedAtTopLevel
-                .wrap(root_node.src_loc())
-                .collect_into(&global.err_collector),
+    for (func_index, func_info) in global.funcs.iter_enumerated() {
+        let root_node = func_info.ast_node.deref();
+        let ast_func = root_node.as_fn_def().unwrap();
+        let mut builder = MirFuncBuilder::new(global, func_index, root_node.src_loc());
+        let body = ast_func
+            .body
+            .as_ref()
+            .unwrap_or_else(|| panic!("TODO: extern functions"));
+        for node in body {
+            builder.next_stmt(&node);
         }
+        mir_object.functions.push(builder.finish());
     }
     mir_object
 }

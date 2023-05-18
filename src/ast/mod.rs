@@ -160,6 +160,14 @@ impl AstNode {
     pub const fn is_return(&self) -> bool {
         matches!(self, Self::Return(..))
     }
+
+    pub fn as_fn_def(&self) -> Option<&Function> {
+        if let Self::FnDef(v) = self {
+            Some(v)
+        } else {
+            None
+        }
+    }
 }
 
 impl Default for AstNode {

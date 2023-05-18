@@ -11,23 +11,23 @@ use cranelift_codegen::{ir::FuncRef, isa::CallConv};
 use cranelift_frontend::Variable;
 use cranelift_module::{FuncId, Linkage, Module};
 use cranelift_object::{ObjectModule, ObjectProduct};
+use index_vec::IndexVec;
 
 use crate::{
-    ast::{parser::AstParser, type_expr::TypeExpr, AstNode, Signature},
+    ast::{parser::AstParser, type_expr::TypeExpr, AstNode, AstNodeRef, Signature},
     error::{CollectIfErr, ErrorCollector, ErrorContent},
 };
 
-use super::{trans_ty, FlatType};
+use super::trans_ty;
 
 /// Information about a function
 #[derive(Clone, Debug)]
 pub struct FuncInfo {
     pub name: &'static str,
-    pub index: u32,
     pub sig: Signature,
+    pub ast_node: AstNodeRef,
 }
 
-/// Information about the parent loop block, stored inside `LocalContext` as a stack
 #[derive(Clone, Debug)]
 pub(super) struct LoopInfo {
     pub break_block: Block,
@@ -43,10 +43,27 @@ impl LoopInfo {
     }
 }
 
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct FuncIndex(pub usize);
+impl Debug for FuncIndex {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "fn{}", self.0)
+    }
+}
+impl index_vec::Idx for FuncIndex {
+    fn from_usize(idx: usize) -> Self {
+        Self(idx)
+    }
+    fn index(self) -> usize {
+        self.0
+    }
+}
+
 /// Keeps track of global symbols
 pub struct GlobalContext {
-    /// Map from function name to Id and signature of the function
-    funcs: HashMap<&'static str, FuncInfo>,
+    pub funcs: IndexVec<FuncIndex, FuncInfo>,
+    /// Map from function name to function index
+    pub func_indices: HashMap<&'static str, FuncIndex>,
     pub err_collector: Rc<ErrorCollector>,
 }
 
@@ -63,14 +80,16 @@ impl GlobalContext {
     /// An empty global context
     pub(self) fn prototype(err_collector: Rc<ErrorCollector>) -> Self {
         Self {
-            funcs: HashMap::new(),
+            funcs: IndexVec::new(),
+            func_indices: HashMap::new(),
             err_collector,
         }
     }
 
-    /// Get the `FuncInfo` of a function by its name
-    pub fn func(&self, name: &str) -> Option<&FuncInfo> {
-        self.funcs.get(name)
+    /// Get the `FuncIndex` and `FuncInfo` of a function by its name
+    pub fn func(&self, name: &str) -> Option<(FuncIndex, &FuncInfo)> {
+        let &idx = self.func_indices.get(name)?;
+        Some((idx, self.funcs.get(idx)?))
     }
 
     /// Declares a new function, if the function already existed, returns `Err`
@@ -78,11 +97,16 @@ impl GlobalContext {
         &mut self,
         name: &'static str,
         sig: Signature,
-        index: u32,
         _linkage: Linkage,
+        ast_node: AstNodeRef,
     ) -> Result<(), ()> {
-        let func_info = FuncInfo { name, index, sig };
-        match self.funcs.insert(name, func_info) {
+        let func_info = FuncInfo {
+            name,
+            sig,
+            ast_node,
+        };
+        let idx = self.funcs.push(func_info);
+        match self.func_indices.insert(name, idx) {
             Some(..) => Err(()),
             None => Ok(()),
         }
@@ -94,24 +118,21 @@ pub fn build_global_context(
     err_collector: Rc<ErrorCollector>,
 ) -> GlobalContext {
     let mut global = GlobalContext::prototype(err_collector);
-    let mut next_func_index = 0u32;
-    for item_node in ast_parser.iter() {
-        let item_node = item_node.deref();
-        match item_node.inner() {
+    for node_ref in ast_parser.iter() {
+        let node = node_ref.deref();
+        match node.inner() {
             AstNode::FnDef(function) => {
-                let func_index = next_func_index;
-                next_func_index += 1;
                 let linkage = match function.body {
                     Some(..) => Linkage::Export,
                     None => Linkage::Import,
                 };
                 global
-                    .declare_func(function.name, function.sign.clone(), func_index, linkage)
-                    .map_err(|_| ErrorContent::FuncRedef.wrap(item_node.src_loc()))
+                    .declare_func(function.name, function.sign.clone(), linkage, node_ref)
+                    .map_err(|_| ErrorContent::FuncRedef.wrap(node.src_loc()))
                     .collect_err(&global.err_collector);
             }
             _ => ErrorContent::ExprNotAllowedAtTopLevel
-                .wrap(item_node.src_loc())
+                .wrap(node.src_loc())
                 .collect_into(&global.err_collector),
         }
     }

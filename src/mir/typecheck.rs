@@ -1,6 +1,6 @@
 use crate::{
     ast::type_expr::{NumericType, TypeExpr},
-    gen::GlobalContext,
+    gen::context::GlobalContext,
 };
 
 pub static ANY_NUMERIC: TypeExpr = TypeExpr::_UnknownNumeric(NumericType::new());
