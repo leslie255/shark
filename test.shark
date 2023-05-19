@@ -1,4 +1,7 @@
+fn lol(_: []u8) {
+}
+
 fn main() {
-    let x: i32 = 0;
-    return;
+    let x: (i32, (char, bool));
+    let y: []u8;
 }

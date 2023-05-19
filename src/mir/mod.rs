@@ -5,7 +5,7 @@ use std::fmt::Debug;
 
 use index_vec::IndexVec;
 
-use crate::{ast::type_expr::TypeExpr, gen::context::FuncIndex, token::NumValue};
+use crate::{ast::type_expr::TypeExpr, gen::context::FuncIndex, token::NumValue, IndexVecFormatter};
 
 // all variables listed in function head
 // control flow is in SSA-style CFG but variables can be mutable
@@ -128,7 +128,7 @@ pub enum Value {
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct Variable(usize);
+pub struct Variable(pub usize);
 impl index_vec::Idx for Variable {
     fn from_usize(idx: usize) -> Self {
         Self(idx)
@@ -237,14 +237,6 @@ impl Debug for VarInfo {
             write!(f, " => {:?}", name)?;
         }
         Ok(())
-    }
-}
-
-/// A format "functor" for displaying an `IndexVec` as key-value pairs
-struct IndexVecFormatter<'short, I: Debug + index_vec::Idx, T: Debug>(&'short IndexVec<I, T>);
-impl<'short, I: Debug + index_vec::Idx, T: Debug> Debug for IndexVecFormatter<'short, I, T> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_map().entries(self.0.iter_enumerated()).finish()
     }
 }
 

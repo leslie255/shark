@@ -3,8 +3,6 @@
 #![feature(iter_collect_into)]
 #![allow(dead_code)]
 
-extern crate index_vec;
-
 mod ast;
 mod buffered_content;
 mod error;
@@ -14,7 +12,8 @@ mod string;
 mod term_color;
 mod token;
 
-use std::{env, fs, rc::Rc};
+use index_vec::IndexVec;
+use std::{env, fmt::Debug, fs, rc::Rc};
 
 use ast::parser::AstParser;
 use buffered_content::BufferedContent;
@@ -27,7 +26,8 @@ fn main() {
     let buffers = Rc::new(BufferedContent::default());
     let err_collector = Rc::new(ErrorCollector::default());
     let mut ast_parser = AstParser::new(&file_name, Rc::clone(&buffers), Rc::clone(&err_collector));
-    let mut global_context = gen::context::build_global_context(&mut ast_parser, Rc::clone(&err_collector));
+    let mut global_context =
+        gen::context::build_global_context(&mut ast_parser, Rc::clone(&err_collector));
     dbg!(&global_context);
     let ast = ast_parser.ast;
     dbg!(&ast.root_nodes);
@@ -49,4 +49,12 @@ fn main() {
 fn write_bytes_to_file(path: &str, buf: &[u8]) -> std::io::Result<()> {
     let mut file = fs::File::create(path)?;
     std::io::prelude::Write::write_all(&mut file, buf)
+}
+
+/// A format "functor" for displaying an `IndexVec` as key-value pairs
+struct IndexVecFormatter<'short, I: Debug + index_vec::Idx, T: Debug>(&'short IndexVec<I, T>);
+impl<'short, I: Debug + index_vec::Idx, T: Debug> Debug for IndexVecFormatter<'short, I, T> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_map().entries(self.0.iter_enumerated()).finish()
+    }
 }
