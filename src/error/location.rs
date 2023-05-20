@@ -177,6 +177,7 @@ impl<T> Traced<T> {
     /// Returns the wrapped content by mutable reference
     #[inline]
     #[must_use]
+    #[allow(dead_code)]
     pub fn inner_mut(&mut self) -> &mut T {
         &mut self.inner
     }

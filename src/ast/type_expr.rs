@@ -4,7 +4,6 @@ use std::fmt::{Debug, Display, Formatter};
 /// `gen::type_matches` to comparing with co-variance
 #[derive(Clone, PartialEq, Eq)]
 pub enum TypeExpr {
-    INVALID,
     USize,
     ISize,
     U128,
@@ -47,6 +46,7 @@ pub enum TypeExpr {
     Never,
 }
 
+#[allow(dead_code)]
 impl TypeExpr {
     /// A shorthand for creating the `()` empty tuple type
     #[inline]
@@ -57,14 +57,6 @@ impl TypeExpr {
 
     pub fn is_void(&self) -> bool {
         matches!(self, Self::Tuple(children) if children.is_empty())
-    }
-
-    /// Returns `true` if the type expr is [`Never`].
-    ///
-    /// [`Never`]: TypeExpr::Never
-    #[must_use]
-    pub fn is_never(&self) -> bool {
-        matches!(self, Self::Never)
     }
 
     /// Doesn't include `_UnknownNumeric`
@@ -146,7 +138,6 @@ impl TypeExpr {
 
     pub fn is_trivial(&self) -> bool {
         match self {
-            TypeExpr::INVALID => false,
             TypeExpr::USize => false,
             TypeExpr::ISize => false,
             TypeExpr::U128 => false,
@@ -199,7 +190,6 @@ impl TypeExpr {
 impl Debug for TypeExpr {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::INVALID => writeln!(f, "{{invalid}}")?,
             Self::USize => write!(f, "usize")?,
             Self::ISize => write!(f, "isize")?,
             Self::U128 => write!(f, "u128")?,
@@ -306,12 +296,6 @@ impl Debug for NumericType {
     }
 }
 impl NumericType {
-    pub const fn new() -> Self {
-        Self {
-            is_int: false,
-            is_signed: false,
-        }
-    }
     pub const fn int(self) -> Self {
         Self {
             is_int: true,

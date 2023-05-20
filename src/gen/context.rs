@@ -1,6 +1,5 @@
 use std::{collections::HashMap, fmt::Debug, ops::Deref, rc::Rc};
 
-use cranelift::prelude::Block;
 use cranelift_module::Linkage;
 use index_vec::IndexVec;
 
@@ -15,21 +14,6 @@ pub struct FuncInfo {
     pub name: &'static str,
     pub sig: Signature,
     pub ast_node: AstNodeRef,
-}
-
-#[derive(Clone, Debug)]
-pub(super) struct LoopInfo {
-    pub break_block: Block,
-    pub continue_block: Block,
-}
-
-impl LoopInfo {
-    pub fn new(break_block: Block, continue_block: Block) -> Self {
-        Self {
-            break_block,
-            continue_block,
-        }
-    }
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]

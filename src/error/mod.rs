@@ -47,6 +47,7 @@ pub enum StrOrChar {
     Char,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub enum ErrorContent {
     // --- Tokenizer stage
@@ -70,7 +71,6 @@ pub enum ErrorContent {
     UnexpectedToken,
     UnexpectedEOF,
     ExpectsSemicolon,
-    ExpectsSemicolonFoundEOF,
     InvalidTypeExpr,
     SliceNoClosingParen,
     LetNoTypeOrRHS,
@@ -81,18 +81,14 @@ pub enum ErrorContent {
 
     // -- Syntax checker error
     ExprNotAllowedAtTopLevel,
-    ExprNotAllowedAsFnBody,
-    ExprNotAllowedAsChild,
     FuncRedef,
 
     // -- Codegen error
     UndefinedVar(&'static str),
     MismatchdTypes(TypeExpr, TypeExpr),
     UnaryAdd,
-    NoneConreteTypeAsRhs,
     FuncNotExist(&'static str),
     MismatchedArgsCount(Option<&'static str>, usize, usize),
-    UnreachableExpr,
     InvalidLetLHS,
     InvalidAssignLHS,
     TailCannotBeReturn,
@@ -129,7 +125,6 @@ impl ErrorContent {
             Self::UnexpectedToken => "unexpected token",
             Self::UnexpectedEOF => "unexpected EOF",
             Self::ExpectsSemicolon => "expects semicolon",
-            Self::ExpectsSemicolonFoundEOF => "expects semicolon but found EOF",
             Self::InvalidTypeExpr => "invalid type expression",
             Self::SliceNoClosingParen => "missing closing rect paren in slice type",
             Self::LetNoTypeOrRHS => "missing type annotation for let expression",
@@ -138,16 +133,12 @@ impl ErrorContent {
             Self::NonUIntForArrLen => "expect unsigned integer for array",
             Self::TypeExprStackOverflow => "type expression exceeds recursive limit (256)",
             Self::ExprNotAllowedAtTopLevel => "expression not allowed at top level",
-            Self::ExprNotAllowedAsFnBody => "expression not allowed as function body",
-            Self::ExprNotAllowedAsChild => "expression is not allowed as child",
             Self::FuncRedef => "redefinition of function",
             Self::UndefinedVar(..) => "undefined variable",
             Self::MismatchdTypes(..) => "mismatched types",
             Self::UnaryAdd => "unary addition is not allowed",
-            Self::NoneConreteTypeAsRhs => "non-concrete type as rhs of `let`",
             Self::FuncNotExist(..) => "function isn't declared",
             Self::MismatchedArgsCount(..) => "mismatched number of function parameters",
-            Self::UnreachableExpr => "unreachable expressions",
             Self::InvalidLetLHS => "invalid lhs for `let`",
             Self::InvalidAssignLHS => "invalid lhs for assignment",
             Self::TailCannotBeReturn => "tail cannot be return",
@@ -186,7 +177,6 @@ impl ErrorContent {
             Self::UnexpectedToken => "Unexpected token".to_string(),
             Self::UnexpectedEOF => "Unexpected EOF".to_string(),
             Self::ExpectsSemicolon => "Expects semicolon".to_string(),
-            Self::ExpectsSemicolonFoundEOF => "Expects semicolon, but found EOF".to_string(),
             Self::InvalidTypeExpr => "Invalid type expression".to_string(),
             Self::SliceNoClosingParen => "Missing a `]`".to_string(),
             Self::LetNoTypeOrRHS => {
@@ -198,10 +188,6 @@ impl ErrorContent {
             Self::NonUIntForArrLen => "Array length should be an unsigned integer".to_string(),
             Self::TypeExprStackOverflow => "Type expression exceeds stack limit".to_string(),
             Self::ExprNotAllowedAtTopLevel => "Consider wrapping this into a function".to_string(),
-            Self::ExprNotAllowedAsFnBody => {
-                "This expression is allowed as a statement in function body".to_string()
-            }
-            Self::ExprNotAllowedAsChild => "This expression is not allowed here".to_string(),
             Self::FuncRedef => "This function was previously declared".to_string(),
             Self::UndefinedVar(name) => format!("Variable `{}` isn't defined", name),
             Self::MismatchdTypes(l, r) => format!("Expected `{:?}`, found `{:?}`", l, r),
@@ -209,7 +195,6 @@ impl ErrorContent {
                 "Try removing the leading `+`, or if it you meant plus, try adding an LHS"
                     .to_string()
             }
-            Self::NoneConreteTypeAsRhs => "Try explicitly specify a type".to_string(),
             &Self::FuncNotExist(name) => format!("The function `{}` doesn't exist", name),
             &Self::MismatchedArgsCount(name, expected, provided) => {
                 format!(
@@ -223,7 +208,6 @@ impl ErrorContent {
                     is_or_are(provided),
                 )
             }
-            Self::UnreachableExpr => "Code following this expression are not reachable".to_string(),
             Self::InvalidLetLHS => {
                 "Only variable or tuple of variables is allowed as LHS of `let`".to_string()
             }

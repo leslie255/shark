@@ -92,6 +92,7 @@ impl TokenStream {
             "static" => Some(Token::Static.wrap_loc((self.path, start_index, end_index))),
             "struct" => Some(Token::Struct.wrap_loc((self.path, start_index, end_index))),
             "true" => Some(Token::True.wrap_loc((self.path, start_index, end_index))),
+            "typedef" => Some(Token::Typedef.wrap_loc((self.path, start_index, end_index))),
             "union" => Some(Token::Union.wrap_loc((self.path, start_index, end_index))),
             "while" => Some(Token::While.wrap_loc((self.path, start_index, end_index))),
             _ => Some(Token::Identifier(str).wrap_loc((self.path, start_index, end_index))),

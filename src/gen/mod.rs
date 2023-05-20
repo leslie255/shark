@@ -2,7 +2,7 @@ use std::{collections::HashMap, fmt::Debug};
 
 use crate::{
     ast::{type_expr::TypeExpr, Signature},
-    mir::{Block, MirFunction, MirObject, Statement, Terminator, Value, VarInfo, Variable},
+    mir::{Block, MirFunction, MirObject, Place, Statement, Terminator, Value, VarInfo, Variable},
     IndexVecFormatter,
 };
 use cranelift::prelude::{AbiParam, Block as ClifBlock, InstBuilder, TrapCode};
@@ -28,7 +28,24 @@ use index_vec::IndexVec;
 
 use self::context::{FuncIndex, GlobalContext};
 
-pub fn make_empty_obj_module(name: &str) -> ObjectModule {
+pub fn compile(global: &GlobalContext, mir: &MirObject) -> ObjectModule {
+    let mut obj_module = make_empty_obj_module("output");
+
+    let mut func_builder_ctx = FunctionBuilderContext::new();
+    for (func_idx, func) in mir.functions.iter_enumerated() {
+        compile_function(
+            global,
+            &mut obj_module,
+            &mut func_builder_ctx,
+            func_idx,
+            func,
+        );
+    }
+
+    obj_module
+}
+
+fn make_empty_obj_module(name: &str) -> ObjectModule {
     let isa = cranelift_native::builder()
         .expect("Error getting the native ISA")
         .finish(settings::Flags::new(settings::builder()))
@@ -41,7 +58,6 @@ pub fn make_empty_obj_module(name: &str) -> ObjectModule {
 fn flatten_ty(global: &GlobalContext, ty: &TypeExpr, mut foreach: impl FnMut(ClifType)) {
     fn r(global: &GlobalContext, ty: &TypeExpr, f: &mut impl FnMut(ClifType)) {
         match ty {
-            TypeExpr::INVALID => panic!("INVALID type reachabled"),
             TypeExpr::USize | TypeExpr::ISize => f(clif_types::I64),
             TypeExpr::U128 | TypeExpr::I128 => f(clif_types::I128),
             TypeExpr::U64 | TypeExpr::I64 => f(clif_types::I64),
@@ -66,6 +82,7 @@ fn flatten_ty(global: &GlobalContext, ty: &TypeExpr, mut foreach: impl FnMut(Cli
             TypeExpr::Never => (),
         }
     }
+
     r(global, ty, &mut foreach)
 }
 
@@ -89,29 +106,6 @@ fn translate_sig(global: &GlobalContext, sig: &Signature) -> ClifSignature {
         params,
         returns,
         call_conv: CallConv::SystemV,
-    }
-}
-
-pub fn compile(global: &GlobalContext, mir: &MirObject) {
-    let mut obj_module = {
-        let isa = cranelift_native::builder()
-            .expect("Error getting the native ISA")
-            .finish(settings::Flags::new(settings::builder()))
-            .unwrap();
-        let obj_builder =
-            ObjectBuilder::new(isa, "output", cranelift_module::default_libcall_names()).unwrap();
-        ObjectModule::new(obj_builder)
-    };
-
-    let mut func_builder_ctx = FunctionBuilderContext::new();
-    for (func_idx, func) in mir.functions.iter_enumerated() {
-        compile_function(
-            global,
-            &mut obj_module,
-            &mut func_builder_ctx,
-            func_idx,
-            func,
-        );
     }
 }
 
@@ -161,6 +155,24 @@ static TUPLE_FIELDS_LABELS: [&'static str; 16] = [
     "_15",
 ];
 
+/// The expanded type of a variable, stored as a tree.
+/// For example, a variable of type `(i32, (), (char, bool))` is expanded to:
+///
+/// ```
+/// aggregate {
+///     "_0": single_slot(var0),
+///     "_1": empty,
+///     "_2": aggregate {
+///         "_0": single_slot(var1),
+///         "_1": single_slot(var2),
+///     },
+/// }
+/// ```
+///
+/// (Note that the fields of aggregates are not ordered, but they must be continuous)
+///
+/// A single slot can also be either refering to a variable or value in cranelift, the latter is
+/// used in intermediate values
 #[derive(Clone)]
 enum Slot {
     Empty,
@@ -168,58 +180,28 @@ enum Slot {
     Aggregate(Aggregate),
 }
 
-impl Debug for Slot {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::Empty => write!(f, "empty_slot"),
-            Self::Single(clif_var) => write!(f, "single_slot({:?})", clif_var),
-            Self::Aggregate(aggregate) => {
-                write!(f, "aggregate ")?;
-                aggregate.fmt(f)
-            }
-        }
-    }
-}
-
-#[derive(Clone, Default)]
-struct Aggregate(HashMap<&'static str, Slot>);
-
-impl Debug for Aggregate {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        self.0.fmt(f)
-    }
-}
-
-#[derive(Clone, Default)]
-struct VarTable(IndexVec<Variable, Slot>);
-
-impl Debug for VarTable {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        IndexVecFormatter(&self.0).fmt(f)
-    }
-}
-
-impl VarTable {
-    fn make_slot(
+impl Slot {
+    /// Create a slot from a type
+    fn from_ty(
         global: &GlobalContext,
         func_builder: &mut FunctionBuilder,
         ty: &TypeExpr,
-        counter: &mut usize,
+        counter: &mut u32,
     ) -> Slot {
         match ty {
-            TypeExpr::Tuple(fields) if fields.is_empty() => Slot::Empty,
+            TypeExpr::Tuple(fields) if fields.is_empty() => Self::Empty,
             TypeExpr::Tuple(fields) => {
                 let mut aggregate = Aggregate::default();
-                aggregate.0.reserve(fields.len());
+                aggregate.vars.reserve(fields.len());
                 for (i, ty) in fields.iter().enumerate() {
                     let field = TUPLE_FIELDS_LABELS[i];
-                    let child = Self::make_slot(global, func_builder, ty, counter);
-                    aggregate.0.insert(field, child);
+                    let child = Self::from_ty(global, func_builder, ty, counter);
+                    aggregate.vars.insert(field, child);
                 }
-                Slot::Aggregate(aggregate)
+                Self::Aggregate(aggregate)
             }
             TypeExpr::Array(..) => todo!(),
-            TypeExpr::Never => Slot::Empty,
+            TypeExpr::Never => Self::Empty,
             _ => {
                 let clif_ty = match ty {
                     TypeExpr::USize | TypeExpr::ISize => clif_types::I64,
@@ -235,50 +217,94 @@ impl VarTable {
                     TypeExpr::Ptr(..) | TypeExpr::Ref(..) => clif_types::I64,
                     TypeExpr::Slice(..) => clif_types::I64X2,
                     TypeExpr::Fn(_, _) => clif_types::I64,
-                    TypeExpr::TypeName(_) => todo!(),
-                    TypeExpr::Struct => todo!(),
-                    TypeExpr::Union => todo!(),
-                    TypeExpr::Enum => todo!(),
-                    TypeExpr::_UnknownNumeric(_) => todo!(),
-                    TypeExpr::_Unknown => todo!(),
-                    TypeExpr::INVALID => panic!("INVALID type reachabled"),
-                    TypeExpr::Tuple(..) => unreachable!(),
-                    TypeExpr::Array(..) => unreachable!(),
-                    TypeExpr::Never => unreachable!(),
+                    TypeExpr::TypeName(_)
+                    | TypeExpr::Struct
+                    | TypeExpr::Union
+                    | TypeExpr::Enum
+                    | TypeExpr::_UnknownNumeric(_)
+                    | TypeExpr::_Unknown => todo!(),
+                    TypeExpr::Tuple(..) | TypeExpr::Array(..) | TypeExpr::Never => unreachable!(),
                 };
-                let clif_var = ClifVariable::new(*counter);
+                let clif_var = ClifVariable::from_u32(*counter);
                 *counter += 1;
                 func_builder.declare_var(clif_var, clif_ty);
-                Slot::Single(clif_var)
+                Self::Single(clif_var)
             }
         }
     }
+}
+
+#[derive(Debug, Clone, Copy)]
+enum RvalueGenerator<'mir> {
+    Empty,
+    VarRange(u32, u32),
+    ConstVal(ClifValue),
+    /// TODO
+    #[allow(dead_code)]
+    ConstTuple(&'mir !),
+}
+impl Iterator for RvalueGenerator<'_> {
+    type Item = ClifValue;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        match self {
+            RvalueGenerator::Empty => None,
+            RvalueGenerator::VarRange(start, end) if *start < *end => {
+                let val = ClifValue::from_u32(*start);
+                *start += 1;
+                Some(val)
+            }
+            &mut RvalueGenerator::ConstVal(val) => {
+                *self = RvalueGenerator::Empty;
+                Some(val)
+            }
+            _ => None,
+        }
+    }
+}
+
+/// See `Slot` above.
+#[derive(Clone, Default)]
+struct Aggregate {
+    start: u32,
+    vars: HashMap<&'static str, Slot>,
+}
+
+/// Keeps track of a variables and their slots
+#[derive(Clone, Default)]
+struct VarTable(IndexVec<Variable, Slot>);
+
+impl VarTable {
+    /// Construct a `VarTable` from a list of variables and their types
     fn from_vars(
         global: &GlobalContext,
         func_builder: &mut FunctionBuilder,
         vars: &IndexVec<Variable, VarInfo>,
     ) -> Self {
-        let mut var_counter = 0usize;
+        let mut var_counter = 0u32;
         let slots: IndexVec<Variable, Slot> = vars
             .iter()
-            .map(|var_info| Self::make_slot(global, func_builder, &var_info.ty, &mut var_counter))
+            .map(|var_info| Slot::from_ty(global, func_builder, &var_info.ty, &mut var_counter))
             .collect();
         Self(slots)
     }
+
+    /// Returns the `Slot` from the variable, panics if variable is out of range
+    fn slot<'a>(&'a self, var: Variable) -> &'a Slot {
+        &self.0[var]
+    }
 }
 
+/// Contains states needed for code generation.
+/// User of the generator is expected to call `FuncCodeGenerator::new` to contruct the generator,
+/// and then call `FuncCodeGenerator::gen_entry_block` to generate the first block,
+/// `FuncCodeGenerator::gen_block` to generate the second block, and then
+/// `FuncCodeGenerator::finalize` before using the cranelift function.
 struct FuncCodeGenerator<'f> {
+    #[allow(dead_code)] // will be used in the future to look up typenames
     global: &'f GlobalContext,
     func_builder: FunctionBuilder<'f>,
     var_table: VarTable,
-}
-
-impl<'f> Debug for FuncCodeGenerator<'f> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("FunctionCodegen")
-            .field("var_table", &self.var_table)
-            .finish_non_exhaustive()
-    }
 }
 
 impl<'f> FuncCodeGenerator<'f> {
@@ -342,8 +368,7 @@ impl<'f> FuncCodeGenerator<'f> {
             }
             Terminator::CondJmp { .. } => todo!(),
             Terminator::Return(val) => {
-                let mut clif_vals = Vec::new();
-                self.gen_value(val, |v| clif_vals.push(v));
+                let clif_vals: Vec<ClifValue> = self.gen_value(val).collect();
                 self.func_builder.ins().return_(&clif_vals);
             }
             Terminator::Unreachable => {
@@ -355,10 +380,30 @@ impl<'f> FuncCodeGenerator<'f> {
     }
 
     fn gen_stmt(&mut self, stmt: &Statement) {
-        println!("[TODO] skipping codegen for: {:?}", stmt);
+        match stmt {
+            Statement::Assign(lhs, rhs) => {
+                let lhs_var = match lhs.projections.as_slice() {
+                    [] => lhs.local,
+                    _ => todo!("projected place as lhs"),
+                };
+                let mut rval_gen = self.gen_value(rhs);
+                match self.var_table.slot(lhs_var) {
+                    Slot::Empty => assert!(rval_gen.next().is_none()),
+                    &Slot::Single(clif_var) => {
+                        let clif_val = rval_gen.next().unwrap();
+                        self.func_builder.def_var(clif_var, clif_val);
+                        assert!(rval_gen.next().is_none());
+                    }
+                    Slot::Aggregate(_) => todo!(),
+                }
+            }
+            Statement::StaticCall { .. } => todo!(),
+            Statement::DynCall => todo!(),
+            Statement::Nop => todo!(),
+        }
     }
 
-    fn gen_value(&mut self, val: &Value, mut foreach: impl FnMut(ClifValue)) {
+    fn gen_value<'mir>(&mut self, val: &'mir Value) -> RvalueGenerator<'mir> {
         match val {
             Value::Number(_, _) => todo!(),
             &Value::Bool(b) => {
@@ -366,19 +411,71 @@ impl<'f> FuncCodeGenerator<'f> {
                     .func_builder
                     .ins()
                     .iconst(clif_types::I32, i64::from(b));
-                foreach(clif_val)
+                RvalueGenerator::ConstVal(clif_val)
             }
             &Value::Char(c) => {
                 let clif_val = self
                     .func_builder
                     .ins()
                     .iconst(clif_types::I32, u32::from(c) as i64);
-                foreach(clif_val)
+                RvalueGenerator::ConstVal(clif_val)
             }
-            Value::Copy(_) => todo!(),
+            Value::Copy(place) => self.rval_from_place(place),
             Value::Ref(_) => todo!(),
-            Value::Void => (),
+            Value::Void => RvalueGenerator::Empty,
             Value::Unreachable => panic!("Unreachable reached"),
         }
+    }
+
+    fn rval_from_place<'mir>(&mut self, place: &'mir Place) -> RvalueGenerator<'mir> {
+        let slot = self.var_table.slot(place.local);
+        for _proj in &place.projections {
+            todo!("yielding value with projections")
+        }
+        match slot {
+            Slot::Empty => RvalueGenerator::Empty,
+            Slot::Single(var) => {
+                let var = var.as_u32();
+                RvalueGenerator::VarRange(var, var + 1)
+            }
+            Slot::Aggregate(aggregate) => {
+                let start = aggregate.start;
+                let len = aggregate.vars.len() as u32;
+                RvalueGenerator::VarRange(start, start + len)
+            }
+        }
+    }
+}
+
+impl Debug for Slot {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Empty => write!(f, "empty_slot"),
+            Self::Single(clif_var) => write!(f, "single_slot({:?})", clif_var),
+            Self::Aggregate(aggregate) => {
+                write!(f, "aggregate ")?;
+                aggregate.fmt(f)
+            }
+        }
+    }
+}
+
+impl Debug for Aggregate {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "(start: {}) {:?}", self.start, self.vars)
+    }
+}
+
+impl Debug for VarTable {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        IndexVecFormatter(&self.0).fmt(f)
+    }
+}
+
+impl<'f> Debug for FuncCodeGenerator<'f> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("FunctionCodegen")
+            .field("var_table", &self.var_table)
+            .finish_non_exhaustive()
     }
 }

@@ -51,6 +51,7 @@ impl Ast {
     }
 
     /// Get the node pool for debug
+    #[allow(dead_code)]
     pub unsafe fn node_pool(&self) -> *const Vec<Traced<AstNode>> {
         self.node_pool.as_ref()
     }
@@ -151,14 +152,6 @@ impl AstNode {
         } else {
             None
         }
-    }
-
-    /// Returns `true` if the ast node is [`Return`].
-    ///
-    /// [`Return`]: AstNode::Return
-    #[must_use]
-    pub const fn is_return(&self) -> bool {
-        matches!(self, Self::Return(..))
     }
 
     pub fn as_fn_def(&self) -> Option<&Function> {

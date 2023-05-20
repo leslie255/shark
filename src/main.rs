@@ -1,7 +1,6 @@
 #![feature(string_leak)]
 #![feature(never_type)] // for placeholders in prototyping
 #![feature(iter_collect_into)]
-#![allow(dead_code)]
 
 mod ast;
 mod buffered_content;
@@ -38,12 +37,14 @@ fn main() {
         return;
     }
 
-    gen::compile(&mut global_context, &mir_object);
+    let obj_module = gen::compile(&mut global_context, &mir_object);
 
-    //let bytes = global_context.finish().emit().unwrap();
-    //write_bytes_to_file("output.o", &bytes).unwrap();
+    if err_collector.print_and_dump_all(&buffers) {
+        return;
+    }
 
-    err_collector.print_and_dump_all(&buffers);
+    let bytes = obj_module.finish().emit().unwrap();
+    write_bytes_to_file("output.o", &bytes).unwrap();
 }
 
 fn write_bytes_to_file(path: &str, buf: &[u8]) -> std::io::Result<()> {

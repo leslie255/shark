@@ -1,9 +1,4 @@
-use crate::{
-    ast::type_expr::{NumericType, TypeExpr},
-    gen::context::GlobalContext,
-};
-
-pub static ANY_NUMERIC: TypeExpr = TypeExpr::_UnknownNumeric(NumericType::new());
+use crate::{ast::type_expr::TypeExpr, gen::context::GlobalContext};
 
 #[must_use]
 pub fn type_matches(global: &GlobalContext, expect: &TypeExpr, found: &TypeExpr) -> bool {
@@ -76,7 +71,7 @@ pub fn type_matches(global: &GlobalContext, expect: &TypeExpr, found: &TypeExpr)
         (_UnknownNumeric(expect), found) => match (expect.is_int, expect.is_signed) {
             // let x = 255;
             // x = {found};
-            (true, false) => found.is_i() || found.is_u() || found.is_f(),
+            (true, false) => found.is_numeric(),
             // let x = -255;
             // x = {found};
             (true, true) => found.is_i() || found.is_f(),
@@ -87,7 +82,7 @@ pub fn type_matches(global: &GlobalContext, expect: &TypeExpr, found: &TypeExpr)
         (expect, _UnknownNumeric(found)) => match (found.is_int, found.is_signed) {
             // let x: {expect};
             // x = 255;
-            (true, false) => expect.is_i() || expect.is_u() || expect.is_f(),
+            (true, false) => expect.is_numeric(),
             // let x: {expect};
             // x = -255;
             (true, true) => expect.is_i() || expect.is_f(),

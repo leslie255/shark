@@ -5,7 +5,9 @@ use std::fmt::Debug;
 
 use index_vec::IndexVec;
 
-use crate::{ast::type_expr::TypeExpr, gen::context::FuncIndex, token::NumValue, IndexVecFormatter};
+use crate::{
+    ast::type_expr::TypeExpr, gen::context::FuncIndex, token::NumValue, IndexVecFormatter,
+};
 
 // all variables listed in function head
 // control flow is in SSA-style CFG but variables can be mutable
@@ -54,8 +56,10 @@ pub enum Statement {
         result: Place,
     },
     /// TODO
+    #[allow(dead_code)]
     DynCall,
     /// Used for deleting a statement
+    #[allow(dead_code)]
     Nop,
 }
 
@@ -94,10 +98,6 @@ pub struct Place {
 }
 
 impl Place {
-    pub fn with_projections(local: Variable, projections: Vec<ProjectionEle>) -> Self {
-        Self { local, projections }
-    }
-
     pub fn no_projection(local: Variable) -> Self {
         Self {
             local,
@@ -109,8 +109,10 @@ impl Place {
 /// See `Place` above.
 #[derive(Debug, Clone)]
 pub enum ProjectionEle {
-    Deref,
+    Deref(TypeExpr),
+    #[allow(dead_code)]
     Index(Value),
+    #[allow(dead_code)]
     Field(&'static str),
 }
 
@@ -200,7 +202,7 @@ impl Debug for Place {
                 write!(f, "({:?}", self.local)?;
                 for proj in projections {
                     match proj {
-                        ProjectionEle::Deref => write!(f, ".deref")?,
+                        ProjectionEle::Deref(ty) => write!(f, ".deref(as {:?})", ty)?,
                         ProjectionEle::Index(val) => write!(f, ".index({:?})", val)?,
                         &ProjectionEle::Field(name) => write!(f, ".field({})", name)?,
                     }

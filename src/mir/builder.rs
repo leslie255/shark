@@ -360,17 +360,21 @@ impl<'g> MirFuncBuilder<'g> {
         let val = self.convert_expr(node)?;
         let place = match val {
             Value::Copy(mut place) => {
-                if self
-                    .deduce_place_ty(&place)
-                    .map_or(true, |t| !t.is_ref() && !t.is_ptr())
-                {
-                    ErrorContent::InvalidDeref
-                        .wrap(node.src_loc())
-                        .collect_into(&self.global.err_collector);
-                    return None;
+                let ty = self.deduce_place_ty(&place);
+                match ty.as_deref() {
+                    Some(TypeExpr::Ref(ty) | TypeExpr::Ptr(ty)) => {
+                        place
+                            .projections
+                            .push(ProjectionEle::Deref(ty.deref().clone()));
+                        place
+                    }
+                    Some(..) | None => {
+                        ErrorContent::InvalidDeref
+                            .wrap(node.src_loc())
+                            .collect_into(&self.global.err_collector);
+                        return None;
+                    }
                 }
-                place.projections.push(ProjectionEle::Deref);
-                place
             }
             Value::Ref(place) => place,
             _ => {
@@ -454,23 +458,20 @@ impl<'g> MirFuncBuilder<'g> {
 
     /// Deduce the type of a `Place`, returns `None` if there is a type error (does not report the
     /// type error)
-    fn deduce_place_ty<'a>(&'a self, place: &Place) -> Option<Cow<'a, TypeExpr>> {
+    fn deduce_place_ty<'a>(&'a self, place: &'a Place) -> Option<Cow<'a, TypeExpr>> {
         let base_ty = &self.function.vars[place.local].ty;
         match place.projections.as_slice() {
             [] => Some(Cow::Borrowed(base_ty)),
             projections => {
-                let mut ty = base_ty.clone();
+                let mut ty = Cow::Borrowed(base_ty);
                 for proj in projections {
                     ty = match proj {
-                        ProjectionEle::Deref => match ty {
-                            TypeExpr::Ref(ty) => *ty,
-                            _ => return None,
-                        },
+                        ProjectionEle::Deref(target_ty) => Cow::Borrowed(target_ty),
                         ProjectionEle::Index(_) => todo!(),
                         ProjectionEle::Field(_) => todo!(),
                     }
                 }
-                Some(Cow::Owned(ty))
+                Some(ty)
             }
         }
     }

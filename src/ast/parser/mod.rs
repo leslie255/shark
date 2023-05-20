@@ -54,6 +54,7 @@ impl AstParser {
         Some(node_ref)
     }
 
+    #[allow(dead_code)]
     pub fn add_str(&mut self, str: String) -> usize {
         self.ast.add_str(str)
     }

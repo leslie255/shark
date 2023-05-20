@@ -11,6 +11,7 @@ pub enum NumValue {
     I(i64),
     F(f64),
 }
+#[allow(dead_code)]
 impl NumValue {
     pub fn as_unsigned(self) -> Option<u64> {
         match self {
@@ -91,7 +92,6 @@ pub enum Token {
 
     // --- Keywards
     As,
-    Alias,
     Break,
     Continue,
     Else,
@@ -109,7 +109,7 @@ pub enum Token {
     Static,
     Struct,
     True,
-    Typedef, // >>=
+    Typedef,
     Union,
     While,
 
