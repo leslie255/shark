@@ -53,6 +53,14 @@ impl NumValue {
     pub fn is_int(&self) -> bool {
         matches!(self, Self::I(..) | Self::U(..))
     }
+
+    pub fn as_f(&self) -> Option<f64> {
+        if let &Self::F(v) = self {
+            Some(v)
+        } else {
+            None
+        }
+    }
 }
 impl Debug for NumValue {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {

@@ -1,4 +1,4 @@
-use std::{collections::HashMap, fmt::Debug};
+use std::{collections::HashMap, fmt::Debug, vec};
 
 use crate::{
     ast::{type_expr::TypeExpr, Signature},
@@ -8,9 +8,11 @@ use crate::{
     },
     IndexVecFormatter,
 };
-use cranelift::prelude::{AbiParam, Block as ClifBlock, InstBuilder, TrapCode};
+use cranelift::prelude::{
+    AbiParam, Block as ClifBlock, ExtFuncData, ExternalName, InstBuilder, TrapCode,
+};
 use cranelift_codegen::{
-    ir::{UserExternalName, UserFuncName},
+    ir::{FuncRef, UserExternalName, UserFuncName},
     isa::CallConv,
     settings, Context,
 };
@@ -239,31 +241,36 @@ impl Slot {
     }
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 enum RvalueGenerator<'mir> {
     Empty,
-    VarRange(u32, u32),
-    ConstVal(ClifValue),
+    Val(ClifValue),
     /// TODO
     #[allow(dead_code)]
     ConstTuple(&'mir !),
+    Vals(vec::IntoIter<ClifValue>),
 }
 impl Iterator for RvalueGenerator<'_> {
     type Item = ClifValue;
 
     fn next(&mut self) -> Option<Self::Item> {
         match self {
-            RvalueGenerator::Empty => None,
-            RvalueGenerator::VarRange(start, end) if *start < *end => {
-                let val = ClifValue::from_u32(*start);
-                *start += 1;
+            Self::Empty => None,
+            &mut Self::Val(val) => {
+                *self = Self::Empty;
                 Some(val)
             }
-            &mut RvalueGenerator::ConstVal(val) => {
-                *self = RvalueGenerator::Empty;
-                Some(val)
-            }
+            Self::Vals(iter) => iter.next(),
             _ => None,
+        }
+    }
+
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        match self {
+            Self::Empty => (0, Some(0)),
+            Self::Val(..) => (1, Some(1)),
+            Self::Vals(x) => x.size_hint(),
+            Self::ConstTuple(..) => unreachable!(),
         }
     }
 }
@@ -310,6 +317,8 @@ struct FuncCodeGenerator<'f> {
     global: &'f GlobalContext,
     func_builder: FunctionBuilder<'f>,
     var_table: VarTable,
+    /// Cranelift requires functions called inside this function to be declared at function head
+    imported_funcs: HashMap<FuncIndex, FuncRef>,
 }
 
 impl<'f> FuncCodeGenerator<'f> {
@@ -325,6 +334,7 @@ impl<'f> FuncCodeGenerator<'f> {
             global,
             func_builder,
             var_table,
+            imported_funcs: HashMap::default(),
         }
     }
 
@@ -347,7 +357,7 @@ impl<'f> FuncCodeGenerator<'f> {
             .terminator
             .as_ref()
             .expect("Missing terminator in MIR block");
-        self.gen_terminator(term);
+        self.gen_term(term);
     }
 
     fn gen_block(&mut self, block: &Block) {
@@ -362,10 +372,10 @@ impl<'f> FuncCodeGenerator<'f> {
             .terminator
             .as_ref()
             .expect("Missing terminator in MIR block");
-        self.gen_terminator(term);
+        self.gen_term(term);
     }
 
-    fn gen_terminator(&mut self, term: &Terminator) {
+    fn gen_term(&mut self, term: &Terminator) {
         match term {
             Terminator::Jmp(blockref) => {
                 let clif_block = ClifBlock::new(blockref.0);
@@ -387,28 +397,101 @@ impl<'f> FuncCodeGenerator<'f> {
     fn gen_stmt(&mut self, stmt: &Statement) {
         match stmt {
             Statement::Assign(lhs, rhs) => self.gen_assign(lhs, rhs),
-            Statement::StaticCall { .. } => todo!(),
+            Statement::StaticCall {
+                func_idx,
+                args,
+                result,
+            } => self.gen_call(*func_idx, &args, result),
             Statement::DynCall => todo!(),
             Statement::Nop => todo!(),
         }
     }
 
+    fn gen_call(&mut self, func_idx: FuncIndex, args: &[Value], result: &Place) {
+        // import function if needed
+        let func_ref = match self.imported_funcs.get(&func_idx) {
+            Some(&func_ref) => func_ref,
+            None => {
+                let func_info = &self.global.funcs[func_idx];
+                // TODO: translate all signatures in the same pass as global context building
+                let clif_sig = translate_sig(self.global, &func_info.sig);
+                let sig_ref = self.func_builder.import_signature(clif_sig);
+                let name_ref = self
+                    .func_builder
+                    .func
+                    .declare_imported_user_function(UserExternalName::new(0, func_idx.0 as u32));
+                let func_ref = self.func_builder.import_function(ExtFuncData {
+                    name: ExternalName::User(name_ref),
+                    signature: sig_ref,
+                    colocated: false,
+                });
+                self.imported_funcs.insert(func_idx, func_ref);
+                func_ref
+            }
+        };
+
+        // generate arguments
+        let mut clif_args = Vec::<ClifValue>::new();
+        for arg in args {
+            self.gen_rval(arg).collect_into(&mut clif_args);
+        }
+
+        // call
+        let inst = self.func_builder.ins().call(func_ref, &clif_args);
+
+        // store results into result place
+        let call_results = self.func_builder.inst_results(inst);
+        match self.solve_place(result) {
+            Slot::Empty => (),
+            &Slot::Single(clif_var) => {
+                assert_eq!(call_results.len(), 1);
+                let &clif_val = unsafe { call_results.get_unchecked(0) };
+                dbg!(clif_var, clif_val);
+                self.func_builder.def_var(clif_var, clif_val);
+            }
+            Slot::Aggregate(_) => todo!("aggregate as result of function"),
+        }
+    }
+
     fn gen_rval<'mir>(&mut self, val: &'mir Value) -> RvalueGenerator<'mir> {
         match val {
-            Value::Number(_, _) => todo!(),
+            Value::Number(ty, numval) => {
+                let clif_ty = match ty {
+                    TypeExpr::USize | TypeExpr::ISize => clif_types::I64,
+                    TypeExpr::U128 | TypeExpr::I128 => clif_types::I128,
+                    TypeExpr::U64 | TypeExpr::I64 => clif_types::I64,
+                    TypeExpr::U32 | TypeExpr::I32 => clif_types::I32,
+                    TypeExpr::U16 | TypeExpr::I16 => clif_types::I16,
+                    TypeExpr::U8 | TypeExpr::I8 => clif_types::I8,
+                    TypeExpr::F64 => clif_types::F64,
+                    TypeExpr::F32 => clif_types::F32,
+                    TypeExpr::_UnknownNumeric(num_ty) => match num_ty.is_int {
+                        true => clif_types::I32,
+                        false => clif_types::F64,
+                    },
+                    ty => unreachable!("non-integer type used for numeric const: {:?}", ty),
+                };
+                let clif_val = match clif_ty {
+                    ty if ty.is_int() => self.func_builder.ins().iconst(clif_ty, numval.to_be()),
+                    clif_types::F64 => self.func_builder.ins().f64const(numval.as_f().unwrap()),
+                    clif_types::F32 => self
+                        .func_builder
+                        .ins()
+                        .f32const(numval.as_f().unwrap() as f32),
+                    _ => unreachable!(),
+                };
+                RvalueGenerator::Val(clif_val)
+            }
             &Value::Bool(b) => {
-                let clif_val = self
-                    .func_builder
-                    .ins()
-                    .iconst(clif_types::I8, i64::from(b));
-                RvalueGenerator::ConstVal(clif_val)
+                let clif_val = self.func_builder.ins().iconst(clif_types::I8, i64::from(b));
+                RvalueGenerator::Val(clif_val)
             }
             &Value::Char(c) => {
                 let clif_val = self
                     .func_builder
                     .ins()
                     .iconst(clif_types::I32, u32::from(c) as i64);
-                RvalueGenerator::ConstVal(clif_val)
+                RvalueGenerator::Val(clif_val)
             }
             Value::Copy(place) => self.copy_place(place),
             Value::Ref(_) => todo!(),
@@ -434,14 +517,14 @@ impl<'f> FuncCodeGenerator<'f> {
     fn copy_place<'mir>(&mut self, place: &'mir Place) -> RvalueGenerator<'mir> {
         match self.solve_place(place) {
             Slot::Empty => RvalueGenerator::Empty,
-            Slot::Single(var) => {
-                let var = var.as_u32();
-                RvalueGenerator::VarRange(var, var + 1)
-            }
+            &Slot::Single(var) => RvalueGenerator::Val(self.func_builder.use_var(var)),
             Slot::Aggregate(aggregate) => {
                 let start = aggregate.start;
                 let len = aggregate.vars.len() as u32;
-                RvalueGenerator::VarRange(start, start + len)
+                let vals: Vec<ClifValue> = (start..start + len)
+                    .map(|id| self.func_builder.use_var(ClifVariable::from_u32(id)))
+                    .collect();
+                RvalueGenerator::Vals(vals.into_iter())
             }
         }
     }

@@ -34,7 +34,6 @@ fn main() {
     // Global context
     let mut global_context =
         gen::context::build_global_context(&mut ast_parser, Rc::clone(&err_collector));
-    dbg!(&global_context);
     if err_collector.print_and_dump_all(&buffers) {
         return;
     }

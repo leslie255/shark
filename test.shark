@@ -1,9 +1,5 @@
-fn main() {
-    let x: (char, bool);
-    let y: (char, bool);
-    x._0 = 'A';
-    x._1 = true;
-    y._0 = 'B';
-    y._1 = false;
-    x._0 = y._0;
+fn f(x: i32) -> i32 { return 10; }
+
+fn main() -> i32 {
+    return f(255);
 }
