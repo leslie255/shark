@@ -355,7 +355,7 @@ impl AstParser {
             match peek.inner() {
                 Token::Dot => {
                     let (l, r, pos) = bin_op!(precedence > 1 else break);
-                    node = AstNode::MemberAccess(l, r).traced(pos);
+                    node = AstNode::Field(l, r).traced(pos);
                     continue;
                 }
                 Token::Mul => {

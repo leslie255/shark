@@ -12,6 +12,7 @@ use crate::{
         CollectIfErr, ErrorContent,
     },
     gen::context::{FuncIndex, FuncInfo, GlobalContext},
+    mir,
     token::NumValue,
 };
 
@@ -154,7 +155,7 @@ impl<'g> MirFuncBuilder<'g> {
             AstNode::BitOp(_, _, _) => todo!(),
             AstNode::BoolOp(_, _, _) => todo!(),
             AstNode::Cmp(_, _, _) => todo!(),
-            AstNode::MemberAccess(_, _) => todo!(),
+            AstNode::Field(parent, child) => self.convert_field(&parent, &child),
             AstNode::BitNot(_) => todo!(),
             AstNode::BoolNot(_) => todo!(),
             AstNode::UnarySub(_) => todo!(),
@@ -181,6 +182,28 @@ impl<'g> MirFuncBuilder<'g> {
             AstNode::EnumDef(_) => todo!(),
             AstNode::Tuple(_) => todo!(),
         }
+    }
+
+    fn convert_field(
+        &mut self,
+        parent: &Traced<AstNode>,
+        child: &Traced<AstNode>,
+    ) -> Option<Value> {
+        let mut place = match self.convert_expr(parent) {
+            Some(Value::Copy(place) | Value::Ref(place)) => place,
+            None | Some(..) => {
+                ErrorContent::InvalidField
+                    .wrap(child.src_loc())
+                    .collect_into(&self.global.err_collector);
+                return None;
+            }
+        };
+        let field = child
+            .as_identifier()
+            .ok_or(ErrorContent::InvalidFieldSyntax.wrap(child.src_loc()))
+            .collect_err(&self.global.err_collector)?;
+        place.projections.push(ProjectionEle::Field(field));
+        Some(Value::Copy(place))
     }
 
     /// Returns the value of the variable that the call results are stored in
@@ -468,7 +491,17 @@ impl<'g> MirFuncBuilder<'g> {
                     ty = match proj {
                         ProjectionEle::Deref(target_ty) => Cow::Borrowed(target_ty),
                         ProjectionEle::Index(_) => todo!(),
-                        ProjectionEle::Field(_) => todo!(),
+                        &ProjectionEle::Field(field) => match base_ty {
+                            TypeExpr::Tuple(fields) => {
+                                let idx = mir::TUPLE_FIELDS_LABELS
+                                    .iter()
+                                    .enumerate()
+                                    .find(|(_, &s)| field == s)?
+                                    .0;
+                                Cow::Borrowed(fields.get(idx)?)
+                            }
+                            _ => return None,
+                        },
                     }
                 }
                 Some(ty)

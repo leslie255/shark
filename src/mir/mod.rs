@@ -9,8 +9,10 @@ use crate::{
     ast::type_expr::TypeExpr, gen::context::FuncIndex, token::NumValue, IndexVecFormatter,
 };
 
-// all variables listed in function head
-// control flow is in SSA-style CFG but variables can be mutable
+pub static TUPLE_FIELDS_LABELS: [&'static str; 16] = [
+    "_0", "_1", "_2", "_3", "_4", "_5", "_6", "_7", "_8", "_9", "_10", "_11", "_12", "_13", "_14",
+    "_15",
+];
 
 #[derive(Clone, Default)]
 pub struct MirObject {

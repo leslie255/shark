@@ -2,7 +2,10 @@ use std::{collections::HashMap, fmt::Debug};
 
 use crate::{
     ast::{type_expr::TypeExpr, Signature},
-    mir::{Block, MirFunction, MirObject, Place, Statement, Terminator, Value, VarInfo, Variable},
+    mir::{
+        self, Block, MirFunction, MirObject, Place, ProjectionEle, Statement, Terminator, Value,
+        VarInfo, Variable,
+    },
     IndexVecFormatter,
 };
 use cranelift::prelude::{AbiParam, Block as ClifBlock, InstBuilder, TrapCode};
@@ -150,11 +153,6 @@ fn compile_function(
     obj_module.define_function(func_id, &mut ctx).unwrap();
 }
 
-static TUPLE_FIELDS_LABELS: [&'static str; 16] = [
-    "_0", "_1", "_2", "_3", "_4", "_5", "_6", "_7", "_8", "_9", "_10", "_11", "_12", "_13", "_14",
-    "_15",
-];
-
 /// The expanded type of a variable, stored as a tree.
 /// For example, a variable of type `(i32, (), (char, bool))` is expanded to:
 ///
@@ -194,7 +192,7 @@ impl Slot {
                 let mut aggregate = Aggregate::default();
                 aggregate.vars.reserve(fields.len());
                 for (i, ty) in fields.iter().enumerate() {
-                    let field = TUPLE_FIELDS_LABELS[i];
+                    let field = mir::TUPLE_FIELDS_LABELS[i];
                     let child = Self::from_ty(global, func_builder, ty, counter);
                     aggregate.vars.insert(field, child);
                 }
@@ -230,6 +228,13 @@ impl Slot {
                 func_builder.declare_var(clif_var, clif_ty);
                 Self::Single(clif_var)
             }
+        }
+    }
+
+    fn field<'a>(&'a self, field: &str) -> Option<&'a Self> {
+        match self {
+            Slot::Empty | Slot::Single(..) => None,
+            Slot::Aggregate(agg) => agg.vars.get(field),
         }
     }
 }
@@ -368,7 +373,7 @@ impl<'f> FuncCodeGenerator<'f> {
             }
             Terminator::CondJmp { .. } => todo!(),
             Terminator::Return(val) => {
-                let clif_vals: Vec<ClifValue> = self.gen_value(val).collect();
+                let clif_vals: Vec<ClifValue> = self.gen_rval(val).collect();
                 self.func_builder.ins().return_(&clif_vals);
             }
             Terminator::Unreachable => {
@@ -381,36 +386,21 @@ impl<'f> FuncCodeGenerator<'f> {
 
     fn gen_stmt(&mut self, stmt: &Statement) {
         match stmt {
-            Statement::Assign(lhs, rhs) => {
-                let lhs_var = match lhs.projections.as_slice() {
-                    [] => lhs.local,
-                    _ => todo!("projected place as lhs"),
-                };
-                let mut rval_gen = self.gen_value(rhs);
-                match self.var_table.slot(lhs_var) {
-                    Slot::Empty => assert!(rval_gen.next().is_none()),
-                    &Slot::Single(clif_var) => {
-                        let clif_val = rval_gen.next().unwrap();
-                        self.func_builder.def_var(clif_var, clif_val);
-                        assert!(rval_gen.next().is_none());
-                    }
-                    Slot::Aggregate(_) => todo!(),
-                }
-            }
+            Statement::Assign(lhs, rhs) => self.gen_assign(lhs, rhs),
             Statement::StaticCall { .. } => todo!(),
             Statement::DynCall => todo!(),
             Statement::Nop => todo!(),
         }
     }
 
-    fn gen_value<'mir>(&mut self, val: &'mir Value) -> RvalueGenerator<'mir> {
+    fn gen_rval<'mir>(&mut self, val: &'mir Value) -> RvalueGenerator<'mir> {
         match val {
             Value::Number(_, _) => todo!(),
             &Value::Bool(b) => {
                 let clif_val = self
                     .func_builder
                     .ins()
-                    .iconst(clif_types::I32, i64::from(b));
+                    .iconst(clif_types::I8, i64::from(b));
                 RvalueGenerator::ConstVal(clif_val)
             }
             &Value::Char(c) => {
@@ -420,19 +410,29 @@ impl<'f> FuncCodeGenerator<'f> {
                     .iconst(clif_types::I32, u32::from(c) as i64);
                 RvalueGenerator::ConstVal(clif_val)
             }
-            Value::Copy(place) => self.rval_from_place(place),
+            Value::Copy(place) => self.copy_place(place),
             Value::Ref(_) => todo!(),
             Value::Void => RvalueGenerator::Empty,
             Value::Unreachable => panic!("Unreachable reached"),
         }
     }
 
-    fn rval_from_place<'mir>(&mut self, place: &'mir Place) -> RvalueGenerator<'mir> {
-        let slot = self.var_table.slot(place.local);
-        for _proj in &place.projections {
-            todo!("yielding value with projections")
+    fn gen_assign(&mut self, lhs_place: &Place, rhs_val: &Value) {
+        let lhs_slot = self.solve_place(lhs_place);
+        match lhs_slot {
+            Slot::Empty => assert!(self.gen_rval(rhs_val).next().is_none()),
+            &Slot::Single(clif_var) => {
+                let mut rval_gen = self.gen_rval(rhs_val);
+                let clif_val = rval_gen.next().unwrap();
+                self.func_builder.def_var(clif_var, clif_val);
+                assert!(rval_gen.next().is_none());
+            }
+            Slot::Aggregate(_) => todo!("aggregate as lhs of assign"),
         }
-        match slot {
+    }
+
+    fn copy_place<'mir>(&mut self, place: &'mir Place) -> RvalueGenerator<'mir> {
+        match self.solve_place(place) {
             Slot::Empty => RvalueGenerator::Empty,
             Slot::Single(var) => {
                 let var = var.as_u32();
@@ -442,6 +442,23 @@ impl<'f> FuncCodeGenerator<'f> {
                 let start = aggregate.start;
                 let len = aggregate.vars.len() as u32;
                 RvalueGenerator::VarRange(start, start + len)
+            }
+        }
+    }
+
+    fn solve_place<'a>(&'a self, place: &Place) -> &'a Slot {
+        match place.projections.as_slice() {
+            [] => self.var_table.slot(place.local),
+            projections => {
+                let mut slot = self.var_table.slot(place.local);
+                for proj in projections {
+                    slot = match proj {
+                        ProjectionEle::Deref(_) => todo!(),
+                        ProjectionEle::Index(_) => todo!(),
+                        ProjectionEle::Field(field) => slot.field(field).unwrap(),
+                    };
+                }
+                slot
             }
         }
     }
@@ -462,7 +479,8 @@ impl Debug for Slot {
 
 impl Debug for Aggregate {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "(start: {}) {:?}", self.start, self.vars)
+        write!(f, "(start: {}) ", self.start)?;
+        self.vars.fmt(f)
     }
 }
 

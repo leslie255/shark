@@ -76,7 +76,7 @@ pub enum AstNode {
     BitOp(BitOpKind, AstNodeRef, AstNodeRef),
     BoolOp(BoolOpKind, AstNodeRef, AstNodeRef),
     Cmp(CmpKind, AstNodeRef, AstNodeRef),
-    MemberAccess(AstNodeRef, AstNodeRef),
+    Field(AstNodeRef, AstNodeRef),
 
     // -- Singular operators
     BitNot(AstNodeRef),

@@ -96,6 +96,8 @@ pub enum ErrorContent {
     TypeInferFailed,
     InvalidDeref,
     MissingReturn,
+    InvalidFieldSyntax,
+    InvalidField,
 
     Todo(&'static str),
 }
@@ -146,6 +148,8 @@ impl ErrorContent {
             Self::TypeInferFailed => "unable to infer type of variable",
             Self::InvalidDeref => "expression cannot be dereferenced",
             Self::MissingReturn => "missing return",
+            Self::InvalidFieldSyntax => "invalid field syntax",
+            Self::InvalidField => "invalid field",
             Self::Todo(..) => "compiler todo",
         }
     }
@@ -221,6 +225,8 @@ impl ErrorContent {
             Self::TypeInferFailed => "Try specifying a type for this variable".to_string(),
             Self::InvalidDeref => "Only pointers or references could be de-referenced".to_string(),
             Self::MissingReturn => "This function is missing a return value".to_string(),
+            Self::InvalidFieldSyntax => "A field must be an identifier".to_string(),
+            Self::InvalidField => "No such field exists".to_string(),
             Self::Todo(msg) => format!("TODO: {}", msg),
         }
     }

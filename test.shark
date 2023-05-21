@@ -1,4 +1,9 @@
 fn main() {
-    let x: char;
-    let y: bool;
+    let x: (char, bool);
+    let y: (char, bool);
+    x._0 = 'A';
+    x._1 = true;
+    y._0 = 'B';
+    y._1 = false;
+    x._0 = y._0;
 }

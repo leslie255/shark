@@ -24,21 +24,30 @@ fn main() {
     let file_name = String::leak(args.next().expect("Expects one argument")) as &'static str;
     let buffers = Rc::new(BufferedContent::default());
     let err_collector = Rc::new(ErrorCollector::default());
-    let mut ast_parser = AstParser::new(&file_name, Rc::clone(&buffers), Rc::clone(&err_collector));
-    let mut global_context =
-        gen::context::build_global_context(&mut ast_parser, Rc::clone(&err_collector));
-    dbg!(&global_context);
-    let ast = ast_parser.ast;
-    dbg!(&ast.root_nodes);
-    let mir_object = mir::builder::make_mir(&global_context);
-    dbg!(&mir_object);
 
+    // AST
+    let mut ast_parser = AstParser::new(&file_name, Rc::clone(&buffers), Rc::clone(&err_collector));
     if err_collector.print_and_dump_all(&buffers) {
         return;
     }
 
-    let obj_module = gen::compile(&mut global_context, &mir_object);
+    // Global context
+    let mut global_context =
+        gen::context::build_global_context(&mut ast_parser, Rc::clone(&err_collector));
+    dbg!(&global_context);
+    if err_collector.print_and_dump_all(&buffers) {
+        return;
+    }
 
+    // MIR
+    let mir_object = mir::builder::make_mir(&global_context);
+    dbg!(&mir_object);
+    if err_collector.print_and_dump_all(&buffers) {
+        return;
+    }
+
+    // Cranelift Codegen
+    let obj_module = gen::compile(&mut global_context, &mir_object);
     if err_collector.print_and_dump_all(&buffers) {
         return;
     }
