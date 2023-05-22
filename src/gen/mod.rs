@@ -181,12 +181,11 @@ enum Slot {
 }
 
 impl Slot {
-    /// Create a slot from a type
+    /// Create a slot from a type, accepts a closure that maps every `ClifType` to `ClifVariable`.
     fn from_ty(
         global: &GlobalContext,
-        func_builder: &mut FunctionBuilder,
         ty: &TypeExpr,
-        counter: &mut u32,
+        make_var: &mut impl FnMut(ClifType) -> ClifVariable,
     ) -> Slot {
         match ty {
             TypeExpr::Tuple(fields) if fields.is_empty() => Self::Empty,
@@ -195,7 +194,7 @@ impl Slot {
                 aggregate.vars.reserve(fields.len());
                 for (i, ty) in fields.iter().enumerate() {
                     let field = mir::TUPLE_FIELDS_LABELS[i];
-                    let child = Self::from_ty(global, func_builder, ty, counter);
+                    let child = Self::from_ty(global, ty, make_var);
                     aggregate.vars.insert(field, child);
                 }
                 Self::Aggregate(aggregate)
@@ -225,9 +224,7 @@ impl Slot {
                     | TypeExpr::_Unknown => todo!(),
                     TypeExpr::Tuple(..) | TypeExpr::Array(..) | TypeExpr::Never => unreachable!(),
                 };
-                let clif_var = ClifVariable::from_u32(*counter);
-                *counter += 1;
-                func_builder.declare_var(clif_var, clif_ty);
+                let clif_var = make_var(clif_ty);
                 Self::Single(clif_var)
             }
         }
@@ -293,11 +290,41 @@ impl VarTable {
         func_builder: &mut FunctionBuilder,
         vars: &IndexVec<Variable, VarInfo>,
     ) -> Self {
+        let mut slots = IndexVec::<Variable, Slot>::with_capacity(vars.len());
+
+        // counter for creating clif variables
         let mut var_counter = 0u32;
-        let slots: IndexVec<Variable, Slot> = vars
-            .iter()
-            .map(|var_info| Slot::from_ty(global, func_builder, &var_info.ty, &mut var_counter))
-            .collect();
+
+        // iterate through MIR variables
+        let mut vars_iter = vars.iter().peekable();
+
+        // set up arguments in the entry block
+        let clif_block0 = func_builder.create_block();
+        func_builder.switch_to_block(clif_block0);
+        while let Some(var_info) = vars_iter.next_if(|v| v.is_arg) {
+            let slot = Slot::from_ty(global, &var_info.ty, &mut |clif_ty| {
+                let clif_var = ClifVariable::from_u32(var_counter);
+                var_counter += 1;
+                let clif_val = func_builder.append_block_param(clif_block0, clif_ty);
+                func_builder.declare_var(clif_var, clif_ty);
+                func_builder.def_var(clif_var, clif_val);
+                clif_var
+            });
+            slots.push(slot);
+        }
+
+        // set up the rest of the blocks
+        vars_iter
+            .map(|var_info| {
+                Slot::from_ty(global, &var_info.ty, &mut |clif_ty| {
+                    let clif_var = ClifVariable::from_u32(var_counter);
+                    var_counter += 1;
+                    func_builder.declare_var(clif_var, clif_ty);
+                    clif_var
+                })
+            })
+            .collect_into(&mut slots);
+
         Self(slots)
     }
 
@@ -344,11 +371,6 @@ impl<'f> FuncCodeGenerator<'f> {
     }
 
     fn gen_entry_block(&mut self, block: &Block) {
-        let clif_block = self.func_builder.create_block();
-        self.func_builder
-            .append_block_params_for_function_params(clif_block);
-        self.func_builder.switch_to_block(clif_block);
-
         for stmt in &block.body {
             self.gen_stmt(stmt);
         }
