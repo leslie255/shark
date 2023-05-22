@@ -6,7 +6,10 @@ use std::fmt::Debug;
 use index_vec::IndexVec;
 
 use crate::{
-    ast::type_expr::TypeExpr, gen::context::FuncIndex, token::NumValue, IndexVecFormatter,
+    ast::{pat::Mutability, type_expr::TypeExpr},
+    gen::context::FuncIndex,
+    token::NumValue,
+    IndexVecFormatter,
 };
 
 pub static TUPLE_FIELDS_LABELS: [&'static str; 16] = [
@@ -22,6 +25,8 @@ pub struct MirObject {
 #[derive(Clone)]
 pub struct VarInfo {
     pub is_mut: bool,
+    /// the variable is a function arguments
+    pub is_arg: bool,
     pub ty: TypeExpr,
     pub name: Option<&'static str>,
 }
@@ -29,6 +34,7 @@ pub struct VarInfo {
 #[derive(Clone)]
 pub struct MirFunction {
     pub vars: IndexVec<Variable, VarInfo>,
+    /// Function argument variables must come before other variables
     pub blocks: IndexVec<BlockRef, Block>,
 }
 
@@ -126,7 +132,7 @@ pub enum Value {
     Bool(bool),
     Char(char),
     Copy(Place),
-    Ref(Place),
+    Ref(Mutability, Place),
     Void,
     Unreachable,
 }
@@ -178,6 +184,9 @@ pub enum CondKind {
     IfFalse,
 }
 
+#[derive(Debug, Clone)]
+pub struct PromotedConsts {}
+
 impl Debug for BlockRef {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "block{}", self.0)
@@ -222,7 +231,10 @@ impl Debug for Value {
             Self::Bool(b) => write!(f, "val({})", b),
             Self::Char(ch) => write!(f, "val('{}')", ch.escape_unicode()),
             Self::Copy(place) => write!(f, "copy {:?}", place),
-            Self::Ref(place) => write!(f, "ref {:?}", place),
+            Self::Ref(mutability, place) => match mutability {
+                Mutability::Mutable => write!(f, "ref mut {:?}", place),
+                Mutability::Const => write!(f, "ref {:?}", place),
+            },
             Self::Void => write!(f, "void"),
             Self::Unreachable => write!(f, "unreachable"),
         }

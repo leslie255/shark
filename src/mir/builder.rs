@@ -4,6 +4,7 @@ use index_vec::IndexVec;
 
 use crate::{
     ast::{
+        pat::{Mutability, Pattern},
         type_expr::{NumericType, TypeExpr},
         AstNode, AstNodeRef, IfExpr,
     },
@@ -69,6 +70,7 @@ impl<'g> MirFuncBuilder<'g> {
         for (arg_name, arg_ty) in &sig.args {
             let var_info = VarInfo {
                 is_mut: true,
+                is_arg: true,
                 ty: arg_ty.clone(),
                 name: Some(*arg_name),
             };
@@ -161,11 +163,11 @@ impl<'g> MirFuncBuilder<'g> {
             AstNode::UnarySub(_) => todo!(),
             AstNode::UnaryAdd(_) => todo!(),
             AstNode::Call(callee, args) => self.convert_call(&callee, &args),
-            AstNode::Let(lhs, ty, rhs) => self.convert_let(*lhs, ty.as_ref(), *rhs),
+            AstNode::Let(lhs, ty, rhs) => self.convert_let(lhs, ty.as_ref(), *rhs),
             AstNode::Assign(lhs, rhs) => self.convert_assign(&lhs, &rhs),
             AstNode::MathOpAssign(_, _, _) => todo!(),
             AstNode::BitOpAssign(_, _, _) => todo!(),
-            AstNode::Ref(node) => self.convert_ref(&node),
+            &AstNode::Ref(mutability, node) => self.convert_ref(mutability, &node),
             AstNode::Deref(node) => self.convert_deref(&node),
             AstNode::Block(_) => todo!(),
             AstNode::FnDef(_) => todo!(),
@@ -190,7 +192,7 @@ impl<'g> MirFuncBuilder<'g> {
         child: &Traced<AstNode>,
     ) -> Option<Value> {
         let mut place = match self.convert_expr(parent) {
-            Some(Value::Copy(place) | Value::Ref(place)) => place,
+            Some(Value::Copy(place) | Value::Ref(_, place)) => place,
             None | Some(..) => {
                 ErrorContent::InvalidField
                     .wrap(child.src_loc())
@@ -240,7 +242,9 @@ impl<'g> MirFuncBuilder<'g> {
             let arg = arg.deref();
             let expect_ty = unsafe { &func_sig.args.get_unchecked(i).1 };
             let arg_val = self.convert_expr(arg)?;
-            self.typecheck_covary(expect_ty, &arg_val, arg.src_loc());
+            if !self.typecheck_covary_ty_val(expect_ty, &arg_val, arg.src_loc()) {
+                self.set_term(Terminator::Unreachable);
+            }
             arg_vals.push(arg_val);
         }
 
@@ -255,16 +259,18 @@ impl<'g> MirFuncBuilder<'g> {
 
     fn convert_let(
         &mut self,
-        lhs: AstNodeRef,
+        lhs: &Traced<Pattern>,
         ty: Option<&TypeExpr>,
         rhs: Option<AstNodeRef>,
     ) -> Option<Value> {
-        let name = lhs
-            .as_identifier()
-            .unwrap_or_else(|| todo!("pattern matched `let`"));
+        let (mutability, name) = match lhs.inner() {
+            Pattern::Var(m, n) => (m, n),
+            Pattern::Tuple(..) => todo!(),
+        };
 
         let var_info = VarInfo {
-            is_mut: true,
+            is_mut: mutability.is_mut(),
+            is_arg: false,
             ty: ty.cloned().unwrap_or(TypeExpr::_Unknown),
             name: Some(name),
         };
@@ -297,7 +303,9 @@ impl<'g> MirFuncBuilder<'g> {
                 self.function.vars[var].ty = infered;
             }
             Some(ty) => {
-                self.typecheck_covary(ty, &rhs_val, rhs.src_loc());
+                if !self.typecheck_covary_ty_val(ty, &rhs_val, rhs.src_loc()) {
+                    self.set_term(Terminator::Unreachable);
+                }
             }
         }
 
@@ -309,9 +317,20 @@ impl<'g> MirFuncBuilder<'g> {
     fn convert_assign(&mut self, lhs: &Traced<AstNode>, rhs: &Traced<AstNode>) -> Option<Value> {
         let lhs_val = self.convert_expr(lhs)?;
         let rhs_val = self.convert_expr(&rhs)?;
-        self.typecheck_covary_val_val(&lhs_val, &rhs_val, rhs.src_loc());
         let lhs_place = match lhs_val {
-            Value::Copy(place) => place,
+            Value::Copy(place) => {
+                // type check
+                let (lhs_ty, lhs_mutable) = self.deduce_place_ty(&place)?;
+                if !self.typecheck_covary_ty_val(lhs_ty, &rhs_val, rhs.src_loc()) {
+                    self.set_term(Terminator::Unreachable);
+                }
+                if lhs_mutable.is_const() {
+                    ErrorContent::AssignToImmut
+                        .wrap(lhs.src_loc())
+                        .collect_into(&self.global.err_collector);
+                }
+                place
+            }
             _ => {
                 ErrorContent::InvalidAssignLHS
                     .wrap(lhs.src_loc())
@@ -365,16 +384,16 @@ impl<'g> MirFuncBuilder<'g> {
         return None;
     }
 
-    fn convert_ref(&mut self, node: &Traced<AstNode>) -> Option<Value> {
+    fn convert_ref(&mut self, mutability: Mutability, node: &Traced<AstNode>) -> Option<Value> {
         let val = self.convert_expr(node)?;
         match val {
-            Value::Copy(place) => Some(Value::Ref(place)),
+            Value::Copy(place) => Some(Value::Ref(mutability, place)),
             val => {
                 let ty = self.deduce_val_ty(&val).unwrap().into_owned();
                 let temp_var = self.make_temp_var(ty);
                 let temp_var_place = Place::no_projection(temp_var);
                 self.add_stmt(Statement::Assign(temp_var_place.clone(), val));
-                Some(Value::Ref(temp_var_place))
+                Some(Value::Ref(mutability, temp_var_place))
             }
         }
     }
@@ -383,23 +402,20 @@ impl<'g> MirFuncBuilder<'g> {
         let val = self.convert_expr(node)?;
         let place = match val {
             Value::Copy(mut place) => {
-                let ty = self.deduce_place_ty(&place);
-                match ty.as_deref() {
-                    Some(TypeExpr::Ref(ty) | TypeExpr::Ptr(ty)) => {
-                        place
-                            .projections
-                            .push(ProjectionEle::Deref(ty.deref().clone()));
-                        place
-                    }
-                    Some(..) | None => {
-                        ErrorContent::InvalidDeref
-                            .wrap(node.src_loc())
-                            .collect_into(&self.global.err_collector);
-                        return None;
-                    }
+                let ty = self.deduce_place_ty(&place).map(|(ty, _)| ty);
+                if let Some(TypeExpr::Ref(_, ty) | TypeExpr::Ptr(_, ty)) = ty {
+                    place
+                        .projections
+                        .push(ProjectionEle::Deref(ty.deref().clone()));
+                    place
+                } else {
+                    ErrorContent::InvalidDeref
+                        .wrap(node.src_loc())
+                        .collect_into(&self.global.err_collector);
+                    return None;
                 }
             }
-            Value::Ref(place) => place,
+            Value::Ref(_, place) => place,
             _ => {
                 ErrorContent::InvalidDeref
                     .wrap(node.src_loc())
@@ -458,7 +474,9 @@ impl<'g> MirFuncBuilder<'g> {
             AstNode::BoolNot(node) => (CondKind::IfFalse, self.convert_expr(node)?),
             _ => (CondKind::IfTrue, self.convert_expr(cond_node)?),
         };
-        self.typecheck_covary(&TypeExpr::Bool, &val, cond_node.src_loc());
+        if !self.typecheck_covary_ty_val(&TypeExpr::Bool, &val, cond_node.src_loc()){
+            self.set_term(Terminator::Unreachable)
+        }
         Some(Condition::new(cond_kind, val))
     }
 
@@ -469,50 +487,62 @@ impl<'g> MirFuncBuilder<'g> {
             Value::Number(ty, _) => Some(Cow::Borrowed(ty)),
             Value::Bool(..) => Some(Cow::Owned(TypeExpr::Bool)),
             Value::Char(..) => Some(Cow::Owned(TypeExpr::Char)),
-            Value::Copy(place) => self.deduce_place_ty(place),
-            Value::Ref(place) => {
-                let t = self.deduce_place_ty(place).map(Cow::into_owned)?;
-                Some(Cow::Owned(TypeExpr::Ref(Box::new(t))))
+            Value::Copy(place) => self.deduce_place_ty(place).map(|x| Cow::Borrowed(x.0)),
+            Value::Ref(mutability, place) => {
+                let t = self.deduce_place_ty(place)?.0.clone();
+                Some(Cow::Owned(TypeExpr::Ref(*mutability, Box::new(t))))
             }
             Value::Void => Some(Cow::Owned(TypeExpr::void())),
             Value::Unreachable => Some(Cow::Owned(TypeExpr::Never)),
         }
     }
 
-    /// Deduce the type of a `Place`, returns `None` if there is a type error (does not report the
-    /// type error)
-    fn deduce_place_ty<'a>(&'a self, place: &'a Place) -> Option<Cow<'a, TypeExpr>> {
-        let base_ty = &self.function.vars[place.local].ty;
-        match place.projections.as_slice() {
-            [] => Some(Cow::Borrowed(base_ty)),
-            projections => {
-                let mut ty = Cow::Borrowed(base_ty);
-                for proj in projections {
-                    ty = match proj {
-                        ProjectionEle::Deref(target_ty) => Cow::Borrowed(target_ty),
-                        ProjectionEle::Index(_) => todo!(),
-                        &ProjectionEle::Field(field) => match base_ty {
-                            TypeExpr::Tuple(fields) => {
-                                let idx = mir::TUPLE_FIELDS_LABELS
-                                    .iter()
-                                    .enumerate()
-                                    .find(|(_, &s)| field == s)?
-                                    .0;
-                                Cow::Borrowed(fields.get(idx)?)
-                            }
-                            _ => return None,
-                        },
-                    }
+    /// Deduce the type and mutability of a `Place`, returns `None` if there is a type error (does
+    /// not report the type error)
+    fn deduce_place_ty<'a>(&'a self, place: &'a Place) -> Option<(&'a TypeExpr, Mutability)> {
+        let var_info = &self.function.vars[place.local];
+        let mut ty = &var_info.ty;
+        let mut is_mut = var_info.is_mut;
+        for proj in &place.projections {
+            match proj {
+                ProjectionEle::Deref(target_ty) => {
+                    is_mut = match ty {
+                        TypeExpr::Ref(m, _) | TypeExpr::Ptr(m, _) => m.is_mut(),
+                        _ => return None,
+                    };
+                    ty = target_ty;
                 }
-                Some(ty)
+                ProjectionEle::Index(_) => todo!(),
+                &ProjectionEle::Field(field) => {
+                    ty = match ty {
+                        TypeExpr::Tuple(fields) => {
+                            let idx = mir::TUPLE_FIELDS_LABELS
+                                .iter()
+                                .enumerate()
+                                .find(|(_, &s)| field == s)?
+                                .0;
+                            fields.get(idx)?
+                        }
+                        _ => return None,
+                    };
+                }
             }
         }
+        Some((
+            ty,
+            if is_mut {
+                Mutability::Mutable
+            } else {
+                Mutability::Const
+            },
+        ))
     }
 
     /// Creates a unnamed, immutable variable, with a given type
     fn make_temp_var(&mut self, ty: TypeExpr) -> Variable {
         self.function.vars.push(VarInfo {
             is_mut: false,
+            is_arg: false,
             ty,
             name: None,
         })
@@ -582,8 +612,13 @@ impl<'g> MirFuncBuilder<'g> {
 
     /// Performs a co-variant type check.
     /// Generates and reports the error if needed.
-    /// Terminates the current block if type check not passed.
-    fn typecheck_covary(&mut self, expect: &TypeExpr, found: &Value, loc: SourceLocation) {
+    /// Returns false if typecheck not passed
+    fn typecheck_covary_ty_val(
+        &self,
+        expect: &TypeExpr,
+        found: &Value,
+        loc: SourceLocation,
+    ) -> bool {
         let found = self
             .deduce_val_ty(found)
             .unwrap_or(Cow::Owned(TypeExpr::_Unknown));
@@ -591,28 +626,10 @@ impl<'g> MirFuncBuilder<'g> {
             ErrorContent::MismatchdTypes(expect.clone(), found.into_owned())
                 .wrap(loc)
                 .collect_into(&self.global.err_collector);
-            self.set_term(Terminator::Unreachable);
+            false
+        } else {
+            true
         }
-    }
-
-    /// Performs a co-variant type check between two values.
-    /// Generates and reports the error if needed.
-    /// Terminates the current block if type check not passed.
-    fn typecheck_covary_val_val(&mut self, expect: &Value, found: &Value, loc: SourceLocation) {
-        let expect = self
-            .deduce_val_ty(expect)
-            .unwrap_or(Cow::Owned(TypeExpr::_Unknown));
-        let expect: &TypeExpr = &expect;
-        let found = found;
-        let found = self
-            .deduce_val_ty(found)
-            .unwrap_or(Cow::Owned(TypeExpr::_Unknown));
-        if !typecheck::type_matches(self.global, expect, &found) {
-            ErrorContent::MismatchdTypes(expect.clone(), found.into_owned())
-                .wrap(loc)
-                .collect_into(&self.global.err_collector);
-            self.set_term(Terminator::Unreachable);
-        };
     }
 }
 

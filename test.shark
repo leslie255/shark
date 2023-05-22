@@ -1,5 +1,6 @@
-fn f(x: i32) -> i32 { return 10; }
-
-fn main() -> i32 {
-    return f(255);
+fn f() {
+    let x: &mut i32;
+    *x = 10;
+    let y: &i32;
+    *y = 10;
 }

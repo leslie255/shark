@@ -1,9 +1,10 @@
 use std::{iter::Peekable, rc::Rc};
 
+mod pat_parser;
 mod type_parser;
 
 use crate::{
-    ast::{BitOpKind, BoolOpKind, CmpKind},
+    ast::{pat::Mutability, BitOpKind, BoolOpKind, CmpKind},
     buffered_content::BufferedContent,
     error::{
         location::{SourceLocation, Traced},
@@ -12,7 +13,7 @@ use crate::{
     token::{tokenizer::TokenStream, Token},
 };
 
-use self::type_parser::parse_type_expr;
+use self::{pat_parser::parse_pat, type_parser::parse_type_expr};
 
 use super::{
     type_expr::TypeExpr, Ast, AstNode, AstNodeRef, EnumDef, Function, IfExpr, MathOpKind,
@@ -52,11 +53,6 @@ impl AstParser {
         let node_ref = self.ast.add_node(node);
         self.ast.root_nodes.push(node_ref);
         Some(node_ref)
-    }
-
-    #[allow(dead_code)]
-    pub fn add_str(&mut self, str: String) -> usize {
-        self.ast.add_str(str)
     }
 }
 
@@ -171,32 +167,6 @@ macro_rules! expect_identifier {
 
 impl AstParser {
     /// Create a new parser.
-    ///
-    /// # Parameters
-    ///
-    /// - `path`: The path of the source file.
-    /// - `buffers`: The content of the source file.
-    /// - `err_collector`: The error collector.
-    ///
-    /// Note: `BufferedContent` and `ErrorCollector` both uses internal mutability so there is no
-    /// need for `&mut` borrow
-    ///
-    /// # Returns
-    ///
-    /// The parser.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use crate::ast::parser::AstParser;
-    /// use crate::buffered_content::BufferedContent;
-    /// use crate::error::ErrorCollector;
-    ///
-    /// let path = "test.shark";
-    /// let buffers = BufferedContent::default();
-    /// let err_collector = ErrorCollector::new(path);
-    /// let parser = AstParser::new(path, &buffers, &err_collector);
-    /// ```
     #[must_use]
     #[inline]
     pub fn new(
@@ -211,19 +181,9 @@ impl AstParser {
             ast: Ast::default(),
         }
     }
-    #[allow(dead_code)]
-    #[must_use]
-    #[inline]
-    pub fn str_pool(&self) -> &Vec<String> {
-        &self.ast.str_pool
-    }
 
     /// Parse a expression.
-    ///
-    /// # Parameters
-    ///
-    /// - `precedence`: The precedence of the expression.
-    /// (only used in recursive calls, when calling from outside always use `15`)
+    /// use `precedence` as 15 as default value
     ///
     /// # Returns
     /// The parsed expression, or `None` if EOF
@@ -260,10 +220,7 @@ impl AstParser {
                 Token::Character(ch) => node = AstNode::Char(ch).traced(token_location),
                 Token::True => node = AstNode::Bool(true).traced(token_location),
                 Token::False => node = AstNode::Bool(false).traced(token_location),
-                Token::String(str) => {
-                    let str_id = self.ast.add_str(str);
-                    node = AstNode::String(str_id).traced(token_location)
-                }
+                Token::String(str) => node = AstNode::String(str).traced(token_location),
                 Token::Let => node = self.parse_let(token_location)?,
                 Token::Fn => node = self.parse_fn_def(token_location)?,
                 Token::Loop => node = self.parse_loop(token_location)?,
@@ -300,8 +257,15 @@ impl AstParser {
                 }
                 Token::Enum => node = self.parse_enum(token_location)?,
                 Token::AndOp => {
+                    let mutability = match self
+                        .token_stream
+                        .next_if(|t| matches!(t.inner(), Token::Mut))
+                    {
+                        Some(_) => Mutability::Mutable,
+                        None => Mutability::Const,
+                    };
                     let (child, loc) = unary!(precedence = 1);
-                    node = AstNode::Ref(child).traced(loc);
+                    node = AstNode::Ref(mutability, child).traced(loc);
                 }
                 Token::Mul => {
                     let (child, loc) = unary!(precedence = 1);
@@ -541,9 +505,8 @@ impl AstParser {
     #[inline]
     fn parse_let(&mut self, start_loc: SourceLocation) -> Option<Traced<AstNode>> {
         // Get lhs
-        let lhs_node = self.parse_expr(13)?;
-        let lhs_loc = lhs_node.src_loc();
-        let lhs_node = self.ast.add_node(lhs_node);
+        let lhs_pat = parse_pat(self, start_loc).collect_err(&self.err_collector)?;
+        let lhs_loc = lhs_pat.src_loc();
 
         // Get type
         let mut peeked_token = peek_token!(self, lhs_loc);
@@ -588,7 +551,7 @@ impl AstParser {
                     .collect_into(&self.err_collector);
                 None
             }
-            _ => Some(AstNode::Let(lhs_node, var_type, rhs).traced(node_loc)),
+            _ => Some(AstNode::Let(lhs_pat, var_type, rhs).traced(node_loc)),
         }
     }
 

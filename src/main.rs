@@ -41,6 +41,7 @@ fn main() {
     // MIR
     let mir_object = mir::builder::make_mir(&global_context);
     dbg!(&mir_object);
+    dbg!(&err_collector);
     if err_collector.print_and_dump_all(&buffers) {
         return;
     }

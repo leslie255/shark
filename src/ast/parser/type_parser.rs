@@ -1,5 +1,5 @@
 use crate::{
-    ast::type_expr::TypeExpr,
+    ast::{pat::Mutability, type_expr::TypeExpr},
     error::{location::SourceLocation, CollectIfErr, Error, ErrorContent},
     token::Token,
 };
@@ -9,17 +9,14 @@ use super::AstParser;
 const TYPE_PARSER_RECURSIVE_LIMIT: usize = 256;
 
 /// Parse a type expression, starting from the token before that expression
-/// Returns `None` if unexpected EOF, errors handled internally
 #[inline]
-#[must_use]
 pub fn parse_type_expr(
     parser: &mut AstParser,
     current_loc: SourceLocation,
 ) -> Result<TypeExpr, Error> {
-    Ok(parse_type_expr_node(parser, current_loc, 0)?)
+    parse_type_expr_node(parser, current_loc, 0)
 }
 
-#[must_use]
 fn parse_type_expr_node(
     parser: &mut AstParser,
     current_loc: SourceLocation,
@@ -53,12 +50,26 @@ fn parse_type_expr_node(
         Token::Identifier(typename) => TypeExpr::TypeName(typename),
         Token::Exc => TypeExpr::Never,
         Token::AndOp => {
+            let mutability = match parser
+                .token_stream
+                .next_if(|t| matches!(t.inner(), Token::Mut))
+            {
+                Some(..) => Mutability::Mutable,
+                None => Mutability::Const,
+            };
             let child = parse_type_expr_node(parser, current_loc, recursive_counter + 1)?;
-            TypeExpr::Ref(Box::new(child))
+            TypeExpr::Ref(mutability, Box::new(child))
         }
         Token::Mul => {
+            let mutability = match parser
+                .token_stream
+                .next_if(|t| matches!(t.inner(), Token::Mut))
+            {
+                Some(_) => Mutability::Mutable,
+                None => Mutability::Const,
+            };
             let child = parse_type_expr_node(parser, current_loc, recursive_counter + 1)?;
-            TypeExpr::Ptr(Box::new(child))
+            TypeExpr::Ptr(mutability, Box::new(child))
         }
         Token::RectParenOpen => {
             let peeked_token = parser

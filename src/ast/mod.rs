@@ -1,4 +1,5 @@
 pub mod parser;
+pub mod pat;
 pub mod type_expr;
 
 use std::{
@@ -12,12 +13,13 @@ use crate::{
 };
 use type_expr::TypeExpr;
 
+use self::pat::{Mutability, Pattern};
+
 /// All AST nodes are stored inside a pool
 /// Uses `AstNodeRef` for inter-reference between nodes
 #[derive(Debug, Default)]
 pub struct Ast {
     node_pool: Box<Vec<Traced<AstNode>>>,
-    pub str_pool: Vec<String>,
     pub root_nodes: Vec<AstNodeRef>,
 }
 
@@ -44,11 +46,6 @@ impl Ast {
             i,
         }
     }
-    /// Add a new string to `str_pool` and return the index of that string
-    pub fn add_str(&mut self, str: String) -> usize {
-        self.str_pool.push(str);
-        self.str_pool.len() - 1
-    }
 
     /// Get the node pool for debug
     #[allow(dead_code)]
@@ -64,8 +61,7 @@ pub enum AstNode {
     // Global identifier
     Identifier(&'static str),
     Number(NumValue),
-    /// By index in `Ast.str_pool`
-    String(usize),
+    String(String),
     Char(char),
     Bool(bool),
     Array(Vec<AstNodeRef>),
@@ -89,7 +85,7 @@ pub enum AstNode {
     Call(AstNodeRef, Vec<AstNodeRef>),
 
     // --- Assignments
-    Let(AstNodeRef, Option<TypeExpr>, Option<AstNodeRef>),
+    Let(Traced<Pattern>, Option<TypeExpr>, Option<AstNodeRef>),
     Assign(AstNodeRef, AstNodeRef),
     /// +=, -=, *=, /=, %=
     MathOpAssign(MathOpKind, AstNodeRef, AstNodeRef),
@@ -97,7 +93,7 @@ pub enum AstNode {
     BitOpAssign(BitOpKind, AstNodeRef, AstNodeRef),
 
     // --- Reference operations
-    Ref(AstNodeRef),
+    Ref(Mutability, AstNodeRef),
     Deref(AstNodeRef),
 
     // -- Control flow

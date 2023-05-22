@@ -1,5 +1,7 @@
 use std::fmt::{Debug, Display, Formatter};
 
+use super::pat::Mutability;
+
 /// `TypeExpr` implements `Eq`, but in the type checker it should always be compared by
 /// `gen::type_matches` to comparing with co-variance
 #[derive(Clone, PartialEq, Eq)]
@@ -21,8 +23,8 @@ pub enum TypeExpr {
     Char,
     Bool,
 
-    Ptr(Box<Self>),
-    Ref(Box<Self>),
+    Ptr(Mutability, Box<Self>),
+    Ref(Mutability, Box<Self>),
     Slice(Box<Self>),
     /// length, child node
     Array(u64, Box<Self>),
@@ -154,17 +156,17 @@ impl TypeExpr {
             TypeExpr::F32 => false,
             TypeExpr::Char => false,
             TypeExpr::Bool => false,
-            TypeExpr::Ptr(_) => false,
-            TypeExpr::Ref(_) => false,
-            TypeExpr::Slice(_) => false,
-            TypeExpr::Array(_, _) => false,
+            TypeExpr::Ptr(..) => false,
+            TypeExpr::Ref(..) => false,
+            TypeExpr::Slice(..) => false,
+            TypeExpr::Array(..) => false,
             TypeExpr::Tuple(fields) => fields.is_empty(),
-            TypeExpr::Fn(_, _) => false,
-            TypeExpr::TypeName(_) => false,
+            TypeExpr::Fn(..) => false,
+            TypeExpr::TypeName(..) => false,
             TypeExpr::Struct => false,
             TypeExpr::Union => false,
             TypeExpr::Enum => false,
-            TypeExpr::_UnknownNumeric(_) => false,
+            TypeExpr::_UnknownNumeric(..) => false,
             TypeExpr::_Unknown => true,
             TypeExpr::Never => true,
         }
@@ -206,8 +208,20 @@ impl Debug for TypeExpr {
             Self::F32 => write!(f, "f32")?,
             Self::Char => write!(f, "char")?,
             Self::Bool => write!(f, "bool")?,
-            Self::Ptr(child) => write!(f, "*{:?}", child)?,
-            Self::Ref(child) => write!(f, "&{:?}", child)?,
+            Self::Ptr(mutability, child) => {
+                if mutability.is_mut() {
+                    write!(f, "*mut {:?}", child)?;
+                } else {
+                    write!(f, "*{:?}", child)?;
+                }
+            }
+            Self::Ref(mutability, child) => {
+                if mutability.is_mut() {
+                    write!(f, "&mut {:?}", child)?;
+                } else {
+                    write!(f, "&{:?}", child)?;
+                }
+            }
             Self::Slice(child) => write!(f, "[]{:?}", child)?,
             Self::Array(len, child) => write!(f, "[{}]{:?}", len, child)?,
             Self::Tuple(children) => {

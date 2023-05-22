@@ -52,8 +52,6 @@ pub enum StrOrChar {
 pub enum ErrorContent {
     // --- Tokenizer stage
     InvalidCharacter(char),
-
-    // String or character literal
     EofInStringOrChar(StrOrChar),
     UnicodeEscOverflow,
     UnicodeEscNonHexDigit,
@@ -62,12 +60,8 @@ pub enum ErrorContent {
     NumericEscNonHexDigit,
     InvalidCharEsc(char),
     CharNoEndQuote,
-
-    // Number literal
-    /// "Expects 0~9, x, o, d, b after `0`"
     InvalidIntSuffix(char),
 
-    // --- AST Parsing stage
     UnexpectedToken,
     UnexpectedEOF,
     ExpectsSemicolon,
@@ -78,12 +72,8 @@ pub enum ErrorContent {
     ExpectMultipleTokens(Vec<Token>),
     NonUIntForArrLen,
     TypeExprStackOverflow,
-
-    // -- Syntax checker error
     ExprNotAllowedAtTopLevel,
     FuncRedef,
-
-    // -- Codegen error
     UndefinedVar(&'static str),
     MismatchdTypes(TypeExpr, TypeExpr),
     UnaryAdd,
@@ -98,6 +88,7 @@ pub enum ErrorContent {
     MissingReturn,
     InvalidFieldSyntax,
     InvalidField,
+    AssignToImmut,
 
     Todo(&'static str),
 }
@@ -150,6 +141,7 @@ impl ErrorContent {
             Self::MissingReturn => "missing return",
             Self::InvalidFieldSyntax => "invalid field syntax",
             Self::InvalidField => "invalid field",
+            Self::AssignToImmut => "immutable value cannot be assigned",
             Self::Todo(..) => "compiler todo",
         }
     }
@@ -227,6 +219,7 @@ impl ErrorContent {
             Self::MissingReturn => "This function is missing a return value".to_string(),
             Self::InvalidFieldSyntax => "A field must be an identifier".to_string(),
             Self::InvalidField => "No such field exists".to_string(),
+            Self::AssignToImmut => "Cannot assign to the lhs because it is immutable".to_string(),
             Self::Todo(msg) => format!("TODO: {}", msg),
         }
     }

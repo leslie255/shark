@@ -298,32 +298,29 @@ impl VarTable {
         // iterate through MIR variables
         let mut vars_iter = vars.iter().peekable();
 
-        // set up arguments in the entry block
+        // set up argument variables
         let clif_block0 = func_builder.create_block();
         func_builder.switch_to_block(clif_block0);
         while let Some(var_info) = vars_iter.next_if(|v| v.is_arg) {
-            let slot = Slot::from_ty(global, &var_info.ty, &mut |clif_ty| {
+            slots.push(Slot::from_ty(global, &var_info.ty, &mut |clif_ty| {
                 let clif_var = ClifVariable::from_u32(var_counter);
                 var_counter += 1;
-                let clif_val = func_builder.append_block_param(clif_block0, clif_ty);
+                let arg_val = func_builder.append_block_param(clif_block0, clif_ty);
                 func_builder.declare_var(clif_var, clif_ty);
-                func_builder.def_var(clif_var, clif_val);
+                func_builder.def_var(clif_var, arg_val);
                 clif_var
-            });
-            slots.push(slot);
+            }));
         }
 
-        // set up the rest of the blocks
-        vars_iter
-            .map(|var_info| {
-                Slot::from_ty(global, &var_info.ty, &mut |clif_ty| {
-                    let clif_var = ClifVariable::from_u32(var_counter);
-                    var_counter += 1;
-                    func_builder.declare_var(clif_var, clif_ty);
-                    clif_var
-                })
-            })
-            .collect_into(&mut slots);
+        // set up other variables
+        for var_info in vars_iter {
+            slots.push(Slot::from_ty(global, &var_info.ty, &mut |clif_ty| {
+                let clif_var = ClifVariable::from_u32(var_counter);
+                var_counter += 1;
+                func_builder.declare_var(clif_var, clif_ty);
+                clif_var
+            }));
+        }
 
         Self(slots)
     }
@@ -516,7 +513,7 @@ impl<'f> FuncCodeGenerator<'f> {
                 RvalueGenerator::Val(clif_val)
             }
             Value::Copy(place) => self.copy_place(place),
-            Value::Ref(_) => todo!(),
+            Value::Ref(..) => todo!(),
             Value::Void => RvalueGenerator::Empty,
             Value::Unreachable => panic!("Unreachable reached"),
         }

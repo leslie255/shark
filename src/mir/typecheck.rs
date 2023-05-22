@@ -1,4 +1,7 @@
-use crate::{ast::type_expr::TypeExpr, gen::context::GlobalContext};
+use crate::{
+    ast::{pat::Mutability, type_expr::TypeExpr},
+    gen::context::GlobalContext,
+};
 
 #[must_use]
 pub fn type_matches(global: &GlobalContext, expect: &TypeExpr, found: &TypeExpr) -> bool {
@@ -24,8 +27,10 @@ pub fn type_matches(global: &GlobalContext, expect: &TypeExpr, found: &TypeExpr)
         | (F32, F32)
         | (Char, Char)
         | (Bool, Bool) => true,
-        (Ptr(lhs), Ptr(rhs)) => type_matches(global, lhs, rhs),
-        (Ref(lhs), Ref(rhs)) => type_matches(global, lhs, rhs),
+        (Ptr(Mutability::Mutable, _), Ptr(Mutability::Const, _)) => false,
+        (Ptr(_, lhs), Ptr(_, rhs)) => type_matches(global, lhs, rhs),
+        (Ref(Mutability::Mutable, _), Ref(Mutability::Const, _)) => false,
+        (Ref(_, lhs), Ref(_, rhs)) => type_matches(global, lhs, rhs),
         (Slice(lhs), Slice(rhs)) => type_matches(global, lhs, rhs),
         (Array(lhs_len, _), Array(rhs_len, _)) if lhs_len != rhs_len => false,
         (Array(_, lhs), Array(_, rhs)) => type_matches(global, lhs, rhs),
