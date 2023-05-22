@@ -190,23 +190,14 @@ impl AstParser {
     /// Errors collected internally
     #[must_use]
     fn parse_expr(&mut self, precedence: usize) -> Option<Traced<AstNode>> {
-        let mut node: Traced<AstNode> = Default::default();
+        let mut node: Traced<AstNode>;
         macro_rules! unary {
-            (precedence = $precedence:expr) => {{
-                let current_loc = node.src_loc();
+            ($current_loc: expr, precedence = $precedence:expr) => {{
                 let child = self
                     .parse_expr($precedence)
-                    .ok_or(ErrorContent::UnexpectedEOF.wrap(current_loc))
+                    .ok_or(ErrorContent::UnexpectedEOF.wrap($current_loc))
                     .collect_err(&self.err_collector)?;
-                let loc = (
-                    if current_loc.file_name.is_empty() {
-                        self.path
-                    } else {
-                        current_loc.file_name
-                    },
-                    current_loc.range.0,
-                    child.src_loc().range.1,
-                );
+                let loc = $current_loc.join(child.src_loc());
                 let child = self.ast.add_node(child);
                 (child, loc)
             }};
@@ -239,7 +230,7 @@ impl AstParser {
                             node = AstNode::Return(None).traced(token_location);
                         }
                         _ => {
-                            let (child, loc) = unary!(precedence = 15);
+                            let (child, loc) = unary!(token_location, precedence = 15);
                             node = AstNode::Return(Some(child)).traced(loc);
                         }
                     }
@@ -264,27 +255,27 @@ impl AstParser {
                         Some(_) => Mutability::Mutable,
                         None => Mutability::Const,
                     };
-                    let (child, loc) = unary!(precedence = 1);
+                    let (child, loc) = unary!(token_location, precedence = 1);
                     node = AstNode::Ref(mutability, child).traced(loc);
                 }
                 Token::Mul => {
-                    let (child, loc) = unary!(precedence = 1);
+                    let (child, loc) = unary!(token_location, precedence = 1);
                     node = AstNode::Deref(child).traced(loc);
                 }
                 Token::Add => {
-                    let (child, loc) = unary!(precedence = 1);
+                    let (child, loc) = unary!(token_location, precedence = 1);
                     node = AstNode::UnaryAdd(child).traced(loc);
                 }
                 Token::Sub => {
-                    let (child, loc) = unary!(precedence = 1);
+                    let (child, loc) = unary!(token_location, precedence = 1);
                     node = AstNode::UnarySub(child).traced(loc);
                 }
                 Token::Squiggle => {
-                    let (child, loc) = unary!(precedence = 2);
+                    let (child, loc) = unary!(token_location, precedence = 2);
                     node = AstNode::BitNot(child).traced(loc);
                 }
                 Token::Exc => {
-                    let (child, loc) = unary!(precedence = 2);
+                    let (child, loc) = unary!(token_location, precedence = 2);
                     node = AstNode::BoolNot(child).traced(loc);
                 }
                 _ => {
