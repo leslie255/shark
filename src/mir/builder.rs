@@ -1,6 +1,7 @@
 use std::{borrow::Cow, collections::HashMap, ops::Deref};
 
 use index_vec::IndexVec;
+use mir::MaybeExternFunction;
 
 use crate::{
     ast::{
@@ -270,7 +271,13 @@ impl<'g> MirFuncBuilder<'g> {
             result: result_place.clone(),
         };
         self.add_stmt(call_stmt);
-        Some(Value::Copy(result_place))
+
+        if func_sig.ret_type.is_never() {
+            self.set_term(Terminator::Unreachable);
+            None
+        } else {
+            Some(Value::Copy(result_place))
+        }
     }
 
     fn convert_let(
@@ -672,14 +679,17 @@ pub fn make_mir<'g>(global: &'g GlobalContext) -> MirObject {
         let root_node = func_info.ast_node.deref();
         let ast_func = root_node.as_fn_def().unwrap();
         let mut builder = MirFuncBuilder::new(global, func_index, root_node.src_loc());
-        let body = ast_func
-            .body
-            .as_ref()
-            .unwrap_or_else(|| panic!("TODO: extern functions"));
-        for node in body {
-            builder.next_stmt(&node);
-        }
-        mir_object.functions.push(builder.finish());
+        match &ast_func.body {
+            Some(body) => {
+                for node in body {
+                    builder.next_stmt(&node);
+                }
+                mir_object
+                    .functions
+                    .push(MaybeExternFunction::Local(builder.finish()))
+            }
+            None => mir_object.functions.push(MaybeExternFunction::Extern),
+        };
     }
     mir_object
 }

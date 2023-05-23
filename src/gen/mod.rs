@@ -3,13 +3,13 @@ use std::{collections::HashMap, fmt::Debug, vec};
 use crate::{
     ast::{type_expr::TypeExpr, Signature},
     mir::{
-        self, Block, CondKind, MirFunction, MirObject, Place, ProjectionEle, Statement, Terminator,
-        Value, VarInfo, Variable,
+        self, Block, CondKind, MaybeExternFunction, MirFunction, MirObject, Place, ProjectionEle,
+        Statement, Terminator, Value, VarInfo, Variable,
     },
     IndexVecFormatter,
 };
 use cranelift::prelude::{
-    AbiParam, Block as ClifBlock, ExtFuncData, ExternalName, InstBuilder, TrapCode,
+    AbiParam, Block as ClifBlock, ExtFuncData, ExternalName, InstBuilder, TrapCode, Configurable,
 };
 use cranelift_codegen::{
     ir::{FuncRef, UserExternalName, UserFuncName},
@@ -34,30 +34,41 @@ use index_vec::IndexVec;
 use self::context::{FuncIndex, GlobalContext};
 
 pub fn compile(global: &GlobalContext, mir: &MirObject) -> ObjectModule {
-    let mut obj_module = make_empty_obj_module("output");
+    let mut obj_module = {
+        let mut settings_builder = settings::builder();
+        settings_builder.set("opt_level", "speed").unwrap();
+        let flags = settings::Flags::new(settings_builder);
+        let isa = cranelift_native::builder()
+            .expect("Error getting the native ISA")
+            .finish(flags)
+            .unwrap();
+        let mut obj_builder =
+            ObjectBuilder::new(isa, "output", cranelift_module::default_libcall_names()).unwrap();
+        obj_builder.per_function_section(true);
+        ObjectModule::new(obj_builder)
+    };
 
     let mut func_builder_ctx = FunctionBuilderContext::new();
     for (func_idx, func) in mir.functions.iter_enumerated() {
-        compile_function(
-            global,
-            &mut obj_module,
-            &mut func_builder_ctx,
-            func_idx,
-            func,
-        );
+        match func {
+            MaybeExternFunction::Local(func) => compile_function(
+                global,
+                &mut obj_module,
+                &mut func_builder_ctx,
+                func_idx,
+                func,
+            ),
+            MaybeExternFunction::Extern => {
+                let func_info = &global.funcs[func_idx];
+                let clif_sig = translate_sig(global, &func_info.sig);
+                obj_module
+                    .declare_function(func_info.name, Linkage::Import, &clif_sig)
+                    .unwrap();
+            }
+        }
     }
 
     obj_module
-}
-
-fn make_empty_obj_module(name: &str) -> ObjectModule {
-    let isa = cranelift_native::builder()
-        .expect("Error getting the native ISA")
-        .finish(settings::Flags::new(settings::builder()))
-        .unwrap();
-    let obj_builder =
-        ObjectBuilder::new(isa, name, cranelift_module::default_libcall_names()).unwrap();
-    ObjectModule::new(obj_builder)
 }
 
 fn flatten_ty(global: &GlobalContext, ty: &TypeExpr, mut foreach: impl FnMut(ClifType)) {
@@ -414,20 +425,16 @@ impl<'f> FuncCodeGenerator<'f> {
                     cond
                 };
                 match cond.cond_kind {
-                    CondKind::IfTrue => self.func_builder.ins().brif(
-                        cond_val,
-                        target,
-                        &[],
-                        otherwise,
-                        &[],
-                    ),
-                    CondKind::IfFalse => self.func_builder.ins().brif(
-                        cond_val,
-                        otherwise,
-                        &[],
-                        target,
-                        &[],
-                    ),
+                    CondKind::IfTrue => {
+                        self.func_builder
+                            .ins()
+                            .brif(cond_val, target, &[], otherwise, &[])
+                    }
+                    CondKind::IfFalse => {
+                        self.func_builder
+                            .ins()
+                            .brif(cond_val, otherwise, &[], target, &[])
+                    }
                 };
             }
             Terminator::Return(val) => {

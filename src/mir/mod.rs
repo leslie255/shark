@@ -19,7 +19,22 @@ pub static TUPLE_FIELDS_LABELS: [&'static str; 16] = [
 
 #[derive(Clone, Default)]
 pub struct MirObject {
-    pub functions: IndexVec<FuncIndex, MirFunction>,
+    pub functions: IndexVec<FuncIndex, MaybeExternFunction>,
+}
+
+#[derive(Clone)]
+pub enum MaybeExternFunction {
+    Local(MirFunction),
+    Extern,
+}
+
+impl Debug for MaybeExternFunction {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Local(func) => func.fmt(f),
+            Self::Extern => write!(f, "extern"),
+        }
+    }
 }
 
 #[derive(Clone)]

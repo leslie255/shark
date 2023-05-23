@@ -187,6 +187,14 @@ impl TypeExpr {
     pub fn is_ptr(&self) -> bool {
         matches!(self, Self::Ptr(..))
     }
+
+    /// Returns `true` if the type expr is [`Never`].
+    ///
+    /// [`Never`]: TypeExpr::Never
+    #[must_use]
+    pub fn is_never(&self) -> bool {
+        matches!(self, Self::Never)
+    }
 }
 
 impl Debug for TypeExpr {
