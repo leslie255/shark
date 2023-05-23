@@ -1,6 +1,15 @@
-fn f() {
-    let x: &mut i32;
-    *x = 10;
-    let y: &i32;
-    *y = 10;
+fn id(x: i32) -> i32 {
+    return x;
+}
+
+fn main() -> i32 {
+    let mut x: (i32, bool);
+    // all integer literals are `i32` for now, as partial type infer hasn't been added yet.
+    x._0 = id(255);
+    x._1 = false;
+    if !x._1 {
+        return x._0;
+    } else {
+        return 0;
+    }
 }

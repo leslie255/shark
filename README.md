@@ -32,7 +32,6 @@ will convert the MIR into Cranelift IR.
 (AST) / (MIR) means which stage of work this feature is in.
 
 - [ ] Referencing and dereferencing (MIR)
-- [ ] If-else (MIR)
 - [ ] Loop (AST)
 - [ ] Math Operators (AST)
 - [ ] Partial type infer (needed for number literals, AST)
@@ -75,8 +74,12 @@ fn main() -> i32 {
     let mut x: (i32, bool);
     // all integer literals are `i32` for now, as partial type infer hasn't been added yet.
     x._0 = id(255);
-    x._1 = true;
-    return x._0;
+    x._1 = false;
+    if !x._1 {
+        return x._0;
+    } else {
+        return 0;
+    }
 }
 ```
 

@@ -120,6 +120,9 @@ impl<'g> MirFuncBuilder<'g> {
 
     fn convert_stmt(&mut self, node: &Traced<AstNode>) -> Option<Value> {
         let val = self.convert_expr(node)?;
+        if val.is_unreachable() {
+            return Some(Value::Unreachable);
+        }
         if !self.deduce_val_ty(&val).map_or(true, |t| t.is_trivial()) {
             ErrorContent::UnusedValue
                 .wrap(node.src_loc())
@@ -176,7 +179,19 @@ impl<'g> MirFuncBuilder<'g> {
             AstNode::Return(child) => self.convert_return(child.as_deref(), node.src_loc()),
             AstNode::Break => todo!(),
             AstNode::Continue => todo!(),
-            AstNode::Tail(_) => todo!(),
+            AstNode::Tail(child) => {
+                let val = self.convert_expr(&child);
+                match val {
+                    Some(Value::Void | Value::Unreachable) | None => val,
+                    _ => {
+                        ErrorContent::Todo("tails (try adding a semicolon at the end")
+                            .wrap(node.src_loc())
+                            .collect_into(&self.global.err_collector);
+                        self.set_term(Terminator::Unreachable);
+                        None
+                    }
+                }
+            }
             AstNode::Typecast(_, _) => todo!(),
             AstNode::TypeDef(_, _) => todo!(),
             AstNode::StructDef(_) => todo!(),
@@ -197,6 +212,7 @@ impl<'g> MirFuncBuilder<'g> {
                 ErrorContent::InvalidField
                     .wrap(child.src_loc())
                     .collect_into(&self.global.err_collector);
+                self.set_term(Terminator::Unreachable);
                 return None;
             }
         };
@@ -381,7 +397,7 @@ impl<'g> MirFuncBuilder<'g> {
             }
         }
         self.set_term(Terminator::Return(val));
-        return None;
+        return Some(Value::Unreachable);
     }
 
     fn convert_ref(&mut self, mutability: Mutability, node: &Traced<AstNode>) -> Option<Value> {
@@ -428,13 +444,14 @@ impl<'g> MirFuncBuilder<'g> {
 
     fn convert_if(&mut self, if_expr: &IfExpr, _src_loc: SourceLocation) -> Option<Value> {
         let mut branches = Vec::<BlockRef>::with_capacity(if_expr.if_blocks.len() + 1);
+        let mut diverging_count = 0usize;
         let mut prev_otherwise = self.current_block;
         for (cond_node, body) in &if_expr.if_blocks {
             let cond = self
                 .if_condition(&cond_node)
                 .unwrap_or(Condition::if_true(Value::Unreachable));
-            let target = self.new_block_owned_by_current();
-            let otherwise = self.new_block_owned_by_current();
+            let target = self.new_block();
+            let otherwise = self.new_block();
             self.switch_to_block(prev_otherwise);
             self.set_term(Terminator::CondJmp {
                 cond,
@@ -444,7 +461,12 @@ impl<'g> MirFuncBuilder<'g> {
 
             self.switch_to_block(target);
             for stmt in body {
-                self.convert_stmt(&stmt);
+                if self
+                    .convert_stmt(&stmt)
+                    .map_or(true, |val| val.is_unreachable())
+                {
+                    diverging_count += 1;
+                };
             }
 
             branches.push(target);
@@ -454,18 +476,29 @@ impl<'g> MirFuncBuilder<'g> {
             Some(body) => {
                 self.switch_to_block(prev_otherwise);
                 for stmt in body {
-                    self.convert_stmt(&stmt);
+                    if self
+                        .convert_stmt(&stmt)
+                        .map_or(true, |val| val.is_unreachable())
+                    {
+                        diverging_count += 1;
+                    };
                 }
                 branches.push(prev_otherwise);
                 self.new_block()
             }
             None => prev_otherwise,
         };
+        let branch_count = branches.len();
         for branch in branches {
             self.set_term_for_block(branch, Terminator::Jmp(merged_block));
         }
         self.switch_to_block(merged_block);
-        Some(Value::Void) // TODO: block tails
+        if diverging_count == branch_count && if_expr.else_block.is_some() {
+            self.function.blocks[merged_block].terminator = Some(Terminator::Unreachable);
+            None
+        } else {
+            Some(Value::Void) // TODO: block tails
+        }
     }
 
     /// Translates the if condition to an MIR condition
@@ -474,7 +507,7 @@ impl<'g> MirFuncBuilder<'g> {
             AstNode::BoolNot(node) => (CondKind::IfFalse, self.convert_expr(node)?),
             _ => (CondKind::IfTrue, self.convert_expr(cond_node)?),
         };
-        if !self.typecheck_covary_ty_val(&TypeExpr::Bool, &val, cond_node.src_loc()){
+        if !self.typecheck_covary_ty_val(&TypeExpr::Bool, &val, cond_node.src_loc()) {
             self.set_term(Terminator::Unreachable)
         }
         Some(Condition::new(cond_kind, val))
@@ -592,7 +625,7 @@ impl<'g> MirFuncBuilder<'g> {
 
     /// Creates a new block which has only one predecessor which is the current block.
     /// If the current block is already unreachable then it propagates to this new block.
-    fn new_block_owned_by_current(&mut self) -> BlockRef {
+    fn _new_block_owned_by_current(&mut self) -> BlockRef {
         let mut block = Block::default();
         if self.current_block().terminator.is_some() {
             block.terminator = Some(Terminator::Unreachable);

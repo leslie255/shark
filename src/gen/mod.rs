@@ -3,8 +3,8 @@ use std::{collections::HashMap, fmt::Debug, vec};
 use crate::{
     ast::{type_expr::TypeExpr, Signature},
     mir::{
-        self, Block, MirFunction, MirObject, Place, ProjectionEle, Statement, Terminator, Value,
-        VarInfo, Variable,
+        self, Block, CondKind, MirFunction, MirObject, Place, ProjectionEle, Statement, Terminator,
+        Value, VarInfo, Variable,
     },
     IndexVecFormatter,
 };
@@ -400,7 +400,36 @@ impl<'f> FuncCodeGenerator<'f> {
                 let clif_block = ClifBlock::new(blockref.0);
                 self.func_builder.ins().jump(clif_block, &[]);
             }
-            Terminator::CondJmp { .. } => todo!(),
+            Terminator::CondJmp {
+                cond,
+                target,
+                otherwise,
+            } => {
+                let target = ClifBlock::new(target.0);
+                let otherwise = ClifBlock::new(otherwise.0);
+                let cond_val = {
+                    let mut rval_gen = self.gen_rval(&cond.val);
+                    let cond = rval_gen.next().unwrap();
+                    assert!(rval_gen.next().is_none());
+                    cond
+                };
+                match cond.cond_kind {
+                    CondKind::IfTrue => self.func_builder.ins().brif(
+                        cond_val,
+                        target,
+                        &[],
+                        otherwise,
+                        &[],
+                    ),
+                    CondKind::IfFalse => self.func_builder.ins().brif(
+                        cond_val,
+                        otherwise,
+                        &[],
+                        target,
+                        &[],
+                    ),
+                };
+            }
             Terminator::Return(val) => {
                 let clif_vals: Vec<ClifValue> = self.gen_rval(val).collect();
                 self.func_builder.ins().return_(&clif_vals);

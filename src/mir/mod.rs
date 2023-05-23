@@ -137,6 +137,16 @@ pub enum Value {
     Unreachable,
 }
 
+impl Value {
+    /// Returns `true` if the value is [`Unreachable`].
+    ///
+    /// [`Unreachable`]: Value::Unreachable
+    #[must_use]
+    pub fn is_unreachable(&self) -> bool {
+        matches!(self, Self::Unreachable)
+    }
+}
+
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Variable(pub usize);
 impl index_vec::Idx for Variable {
@@ -162,8 +172,8 @@ pub enum Terminator {
 
 #[derive(Clone)]
 pub struct Condition {
-    cond_kind: CondKind,
-    val: Value,
+    pub cond_kind: CondKind,
+    pub val: Value,
 }
 
 impl Condition {
