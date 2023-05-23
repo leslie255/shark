@@ -29,8 +29,9 @@ will convert the MIR into Cranelift IR.
 
 ## TODOs until it is feature-equivalent to C:
 
-(AST) / (MIR) / (Codegen) means which stage of work this feature is in.
+(AST) / (MIR) means which stage of work this feature is in.
 
+- [ ] Referencing and dereferencing (MIR)
 - [ ] If-else (MIR)
 - [ ] Loop (AST)
 - [ ] Math Operators (AST)
