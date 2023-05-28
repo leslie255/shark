@@ -1,7 +1,6 @@
 # The Shark compiler
 
-**This is a compiler for custom designed Shark language - a compiled language based on the Cranelift
-backend.**
+**Compiler for a custom designed Shark language - a compiled language based on Cranelift backend.**
 
 ## Compiler Design
 
